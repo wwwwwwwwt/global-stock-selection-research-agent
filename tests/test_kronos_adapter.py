@@ -24,7 +24,8 @@ def test_kronos_predict_shape(sample_ohlcv):
     assert result.symbol == "TEST"
     assert result.horizon == 5
     assert len(result.forecast) == 5
-    assert set(result.forecast.columns) == {"open", "high", "low", "close", "volume"}
+    required = {"open", "high", "low", "close", "volume"}
+    assert required.issubset(set(result.forecast.columns))
     assert 0.0 <= result.confidence <= 1.0
 
 

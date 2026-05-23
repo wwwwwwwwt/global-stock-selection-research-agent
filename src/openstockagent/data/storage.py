@@ -32,10 +32,13 @@ class SQLiteStorage:
         # Convert datetime to string for SQLite
         df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
+        records = df[["symbol", "date", "open", "high", "low", "close", "volume"]].to_dict("records")
+
         with sqlite3.connect(self.db_path) as conn:
-            # Use REPLACE to avoid duplicates
-            df[["symbol", "date", "open", "high", "low", "close", "volume"]].to_sql(
-                "ohlcv", conn, if_exists="append", index=False
+            conn.executemany(
+                """INSERT OR REPLACE INTO ohlcv (symbol, date, open, high, low, close, volume)
+                   VALUES (:symbol, :date, :open, :high, :low, :close, :volume)""",
+                records
             )
 
     def load_ohlcv(self, symbol: str) -> pd.DataFrame:

@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import torch
 
 # Add vendor Kronos to path
 KRONOS_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "vendor" / "Kronos"
@@ -29,10 +28,13 @@ class KronosStockPredictor(BasePredictor):
         tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
         model = Kronos.from_pretrained(model_id)
 
-        self.predictor = _KronosPredictor(model, tokenizer, max_context=512)
+        # Real KronosPredictor accepts: (model, tokenizer, device, max_context, clip)
+        self.predictor = _KronosPredictor(
+            model, tokenizer, device=device, max_context=512, clip=5
+        )
 
     def predict(self, symbol: str, df: pd.DataFrame, horizon: int = 5) -> PredictionResult:
-        # Kronos expects specific column order
+        # Real Kronos expects: open, high, low, close, volume (amount auto-computed)
         required = ["open", "high", "low", "close", "volume"]
         input_df = df[required].copy()
 
@@ -42,14 +44,20 @@ class KronosStockPredictor(BasePredictor):
             freq="B"
         )
 
+        # Real predict() signature:
+        # predict(df, x_timestamp, y_timestamp, pred_len, T=1.0, top_k=0, top_p=0.9,
+        #         sample_count=1, verbose=True)
+        # NOTE: Kronos expects pd.Series for timestamps (needs .dt accessor)
         pred_df = self.predictor.predict(
             df=input_df,
-            x_timestamp=df.index,
-            y_timestamp=future_dates,
+            x_timestamp=pd.Series(df.index),
+            y_timestamp=pd.Series(future_dates),
             pred_len=horizon,
             T=1.0,
+            top_k=0,
             top_p=0.9,
             sample_count=5,
+            verbose=False,
         )
 
         # Confidence: based on forecast stability
