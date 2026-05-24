@@ -10,4 +10,5 @@ venv/
 *.egg-info/
 dist/
 build/
+.worktrees/
 models/*/model.safetensors
