@@ -1,0 +1,3 @@
+instrument_id,start_date,end_date,reason
+EQUITY:CN:600519,2024-01-01,,fixture leader
+EQUITY:CN:000001,2024-01-01,,fixture bank

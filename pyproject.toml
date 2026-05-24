@@ -10,6 +10,7 @@ dependencies = [
     "huggingface-hub>=1.16.1",
     "matplotlib>=3.10.9",
     "pandas>=3.0.3",
+    "pymysql>=1.1.1",
     "pytest>=9.0.3",
     "safetensors>=0.7.0",
     "torch>=2.12.0",
