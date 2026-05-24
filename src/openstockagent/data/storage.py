@@ -304,6 +304,35 @@ class SQLiteStorage:
                 params=(instrument_id, interval, start, end),
             )
 
+    def load_kronos_frame(
+        self,
+        instrument_id: str,
+        interval: str,
+        lookback: int = 512,
+        adjustment: str = "split_adjusted",
+    ) -> pd.DataFrame:
+        columns = ["open", "high", "low", "close", "volume", "amount"]
+        with sqlite3.connect(self.db_path) as conn:
+            df = pd.read_sql_query(
+                """SELECT timestamp, open, high, low, close, volume, amount
+                   FROM bars
+                   WHERE instrument_id = ?
+                     AND interval = ?
+                     AND adjustment = ?
+                     AND is_complete = 1
+                   ORDER BY timestamp DESC
+                   LIMIT ?""",
+                conn,
+                params=(instrument_id, interval, adjustment, lookback),
+            )
+        if df.empty:
+            return pd.DataFrame(columns=columns)
+        df = df.sort_values("timestamp")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        for column in columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+        return df.set_index("timestamp")[columns]
+
     def save_prediction_run(self, run: PredictionRun, predicted_bars: pd.DataFrame) -> str:
         now = utc_now_iso()
         run_record = run.to_record() | {"created_at": now}

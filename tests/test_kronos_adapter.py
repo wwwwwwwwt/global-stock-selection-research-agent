@@ -1,7 +1,27 @@
+import os
+
 import pytest
 import pandas as pd
 import numpy as np
-from openstockagent.predictors.kronos_adapter import KronosStockPredictor
+from openstockagent.predictors.kronos_adapter import KronosStockPredictor, _resolve_model_path
+
+
+KRONOS_TEST_VARIANT = os.getenv("KRONOS_TEST_VARIANT", "base")
+
+
+def _has_local_kronos_weights() -> bool:
+    if KRONOS_TEST_VARIANT not in KronosStockPredictor.MODELS:
+        return False
+    model_hf_id, model_local_name = KronosStockPredictor.MODELS[KRONOS_TEST_VARIANT]
+    model_path = _resolve_model_path(model_hf_id, model_local_name)
+    tokenizer_path = _resolve_model_path("NeoQuasar/Kronos-Tokenizer-base", "kronos-tokenizer")
+    return model_path != model_hf_id and tokenizer_path != "NeoQuasar/Kronos-Tokenizer-base"
+
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_KRONOS_MODEL_TESTS") != "1" or not _has_local_kronos_weights(),
+    reason="Kronos model tests require RUN_KRONOS_MODEL_TESTS=1 and local model weights",
+)
 
 
 @pytest.fixture
@@ -18,7 +38,7 @@ def sample_ohlcv():
 
 
 def test_kronos_predict_shape(sample_ohlcv):
-    predictor = KronosStockPredictor(variant="mini", device="cpu")
+    predictor = KronosStockPredictor(variant=KRONOS_TEST_VARIANT, device="cpu")
     result = predictor.predict("TEST", sample_ohlcv, horizon=5)
 
     assert result.symbol == "TEST"
@@ -31,7 +51,7 @@ def test_kronos_predict_shape(sample_ohlcv):
 
 def test_kronos_predict_consistency(sample_ohlcv):
     """Same input should produce same stub output (deterministic stub uses fixed seed behavior)."""
-    predictor = KronosStockPredictor(variant="mini", device="cpu")
+    predictor = KronosStockPredictor(variant=KRONOS_TEST_VARIANT, device="cpu")
     result1 = predictor.predict("TEST", sample_ohlcv, horizon=3)
     result2 = predictor.predict("TEST", sample_ohlcv, horizon=3)
 

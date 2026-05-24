@@ -20,10 +20,28 @@ LOCAL_MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "model
 
 def _resolve_model_path(hf_repo_id: str, local_name: str) -> str:
     """Prefer local path if exists, otherwise fall back to HF Hub."""
-    local_path = LOCAL_MODELS_DIR / local_name
-    if local_path.exists() and (local_path / "config.json").exists():
-        return str(local_path)
+    for model_root in _model_search_dirs():
+        local_path = model_root / local_name
+        if _is_complete_model_dir(local_path):
+            return str(local_path)
     return hf_repo_id
+
+
+def _model_search_dirs() -> list[Path]:
+    dirs = []
+    env_dir = os.getenv("OPENSTOCKAGENT_MODELS_DIR")
+    if env_dir:
+        dirs.append(Path(env_dir).expanduser())
+    dirs.append(LOCAL_MODELS_DIR)
+    parts = LOCAL_MODELS_DIR.parts
+    if ".worktrees" in parts:
+        worktrees_index = parts.index(".worktrees")
+        dirs.append(Path(*parts[:worktrees_index]) / "models")
+    return dirs
+
+
+def _is_complete_model_dir(path: Path) -> bool:
+    return path.exists() and (path / "config.json").exists() and (path / "model.safetensors").exists()
 
 
 class KronosStockPredictor(BasePredictor):
@@ -50,9 +68,15 @@ class KronosStockPredictor(BasePredictor):
         )
 
     def predict(self, symbol: str, df: pd.DataFrame, horizon: int = 5) -> PredictionResult:
-        # Real Kronos expects: open, high, low, close, volume (amount auto-computed)
+        # Real Kronos accepts: open, high, low, close, volume, with amount optional.
         required = ["open", "high", "low", "close", "volume"]
-        input_df = df[required].copy()
+        missing = [column for column in required if column not in df.columns]
+        if missing:
+            raise ValueError(f"Kronos input missing required columns: {missing}")
+        columns = [*required]
+        if "amount" in df.columns:
+            columns.append("amount")
+        input_df = df[columns].copy()
 
         future_dates = pd.date_range(
             start=df.index[-1] + pd.Timedelta(days=1),
