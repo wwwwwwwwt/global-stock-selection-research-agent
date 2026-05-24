@@ -1,13 +1,41 @@
 import pandas as pd
 import pytest
 
-from openstockagent.data.storage import SQLiteStorage
+from openstockagent.data.storage import MySQLMarketDataStorage
+from openstockagent.database.mysql import MySQLConfig
 import openstockagent.predictors.kronos_adapter as kronos_adapter
 from openstockagent.predictors.kronos_adapter import KronosStockPredictor
 
 
-def test_load_kronos_frame_returns_sorted_numeric_columns(temp_db_path):
-    storage = SQLiteStorage(temp_db_path)
+def test_load_kronos_frame_returns_sorted_numeric_columns():
+    factory = FakeConnectionFactory(
+        fetchall_rows=[
+            [
+                {
+                    "timestamp": "2024-01-04T21:00:00Z",
+                    "open": 103.5,
+                    "high": 105.0,
+                    "low": 102.0,
+                    "close": 104.0,
+                    "volume": 1100.0,
+                    "amount": 114400.0,
+                },
+                {
+                    "timestamp": "2024-01-03T21:00:00Z",
+                    "open": 102.0,
+                    "high": 104.0,
+                    "low": 101.0,
+                    "close": 103.5,
+                    "volume": 1200.0,
+                    "amount": 123000.0,
+                },
+            ]
+        ]
+    )
+    storage = MySQLMarketDataStorage(
+        config=MySQLConfig.from_jdbc_url("jdbc:mysql://127.0.0.1:13306/openstockagent", "root", "123456"),
+        connection_factory=factory,
+    )
     df = pd.DataFrame(
         {
             "instrument_id": ["EQUITY:US:AAPL"] * 3,
@@ -113,3 +141,52 @@ class _RecordingPredictor:
                 "amount": [133250.0],
             }
         )
+
+
+class FakeConnectionFactory:
+    def __init__(self, fetchall_rows=None):
+        self.fetchall_rows = list(fetchall_rows or [])
+        self.executed_sql = []
+        self.executed_params = []
+
+    def __call__(self, config):
+        self.config = config
+        return FakeConnection(self)
+
+
+class FakeConnection:
+    def __init__(self, factory):
+        self.factory = factory
+
+    def cursor(self):
+        return FakeCursor(self.factory)
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class FakeCursor:
+    def __init__(self, factory):
+        self.factory = factory
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        pass
+
+    def execute(self, sql, params=None):
+        self.factory.executed_sql.append(sql)
+        self.factory.executed_params.append(params)
+        return 1
+
+    def executemany(self, sql, params):
+        self.factory.executed_sql.append(sql)
+        self.factory.executed_params.extend(params)
+        return len(params)
+
+    def fetchall(self):
+        return self.factory.fetchall_rows.pop(0) if self.factory.fetchall_rows else []

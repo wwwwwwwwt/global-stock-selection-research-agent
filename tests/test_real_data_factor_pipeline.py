@@ -1,6 +1,5 @@
 import pandas as pd
 
-from openstockagent.data.storage import SQLiteStorage
 from openstockagent.data.symbols import to_source_symbol
 from openstockagent.data.feeds.registry import FeedRegistry
 from openstockagent.pipelines.real_data_factors import run_real_data_factor_pipeline
@@ -15,8 +14,8 @@ def test_to_source_symbol_maps_instrument_ids_to_source_symbols():
     assert to_source_symbol("EQUITY:HK:09988", source="yahoo") == "9988.HK"
 
 
-def test_real_data_factor_pipeline_routes_market_feeds_and_writes_factor_values(temp_db_path):
-    bar_storage = SQLiteStorage(temp_db_path)
+def test_real_data_factor_pipeline_routes_market_feeds_and_writes_factor_values():
+    bar_storage = FakeBarStorage()
     universe_storage = FakeUniverseStorage(
         [
             UniverseMember("cn_sample", "EQUITY:CN:600519", "2024-01-01"),
@@ -55,8 +54,8 @@ def test_real_data_factor_pipeline_routes_market_feeds_and_writes_factor_values(
     assert all(value.percentile is not None for value in factor_storage.values)
 
 
-def test_real_data_factor_pipeline_records_symbol_failures_without_aborting(temp_db_path):
-    bar_storage = SQLiteStorage(temp_db_path)
+def test_real_data_factor_pipeline_records_symbol_failures_without_aborting():
+    bar_storage = FakeBarStorage()
     universe_storage = FakeUniverseStorage(
         [
             UniverseMember("cn_sample", "EQUITY:CN:600519", "2024-01-01"),
@@ -107,6 +106,24 @@ class FakeFactorStorage:
     def upsert_factor_values(self, values):
         self.values = values
         return len(values)
+
+
+class FakeBarStorage:
+    def __init__(self):
+        self.frames = []
+
+    def upsert_bars(self, bars):
+        self.frames.append(bars.copy())
+        return len(bars)
+
+    def load_bars(self, instrument_id, interval, start, end):
+        for frame in self.frames:
+            if frame.iloc[0]["instrument_id"] == instrument_id and frame.iloc[0]["interval"] == interval:
+                return frame[
+                    (frame["timestamp"] >= start)
+                    & (frame["timestamp"] <= end)
+                ].copy()
+        return pd.DataFrame()
 
 
 class FakeFeed:

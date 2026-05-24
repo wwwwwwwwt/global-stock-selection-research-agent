@@ -26,6 +26,13 @@ uv sync
 # Run current experimental single-stock Kronos utility
 uv run python scripts/run_prediction.py AAPL --period 3mo --model mini
 
+# Migrate legacy local SQLite market data into MySQL once
+uv run migrate-sqlite-market-data --sqlite-path data/market.db
+
+# Run real-data factors and stock screening against MySQL
+uv run stock-factors us_sample --as-of 2026-05-22 --period 1y
+uv run stock-screen us_sample --as-of 2026-05-22 --top-n 10
+
 # Run tests
 uv run pytest tests/ -v
 ```
@@ -37,8 +44,12 @@ The current codebase contains the Week 1 foundation:
 ```text
 src/openstockagent/
 ├── data/
-│   ├── feeds/            # Data adapters, currently Yahoo Finance
-│   └── storage.py        # SQLite persistence
+│   ├── feeds/            # Polygon, AKShare, Yahoo-compatible adapters
+│   ├── sqlite_migration.py # One-time legacy SQLite migration
+│   └── storage.py        # MySQL canonical stock market data storage
+├── factors/              # Technical factor engine
+├── screening/            # Screening, ranking, and result storage
+├── universe/             # Stock pool models and MySQL storage
 ├── predictors/
 │   ├── base.py           # Predictor interface
 │   └── kronos_adapter.py # Kronos adapter, now treated as an optional factor source
@@ -69,14 +80,15 @@ Kronos remains useful, but it is not the product center. It can contribute optio
 ## Roadmap
 
 - [x] Project scaffold
-- [x] Yahoo Finance data feed
-- [x] SQLite OHLCV storage
+- [x] Yahoo Finance-compatible data feed
+- [x] MySQL canonical stock market data storage
+- [x] Legacy SQLite migration command
 - [x] Kronos adapter and experimental CLI
 - [x] Global-aware stock selection architecture docs
-- [ ] Canonical market data core
-- [ ] Universe management
-- [ ] Factor engine MVP
-- [ ] Screening and ranking MVP
+- [x] Canonical market data core
+- [x] Universe management
+- [x] Factor engine MVP
+- [x] Screening and ranking MVP
 - [ ] Global market context MVP
 - [ ] News and event ingestion MVP
 - [ ] Classic theory engine, starting with Chan theory MVP

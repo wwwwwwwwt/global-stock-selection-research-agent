@@ -1,8 +1,16 @@
 from click.testing import CliRunner
+import tomllib
+
+
+def test_stock_factors_entrypoint_targets_packaged_module():
+    with open("pyproject.toml", "rb") as handle:
+        pyproject = tomllib.load(handle)
+
+    assert pyproject["project"]["scripts"]["stock-factors"].startswith("openstockagent.")
 
 
 def test_real_data_factor_cli_runs_pipeline(monkeypatch):
-    from scripts import run_real_data_factors
+    from openstockagent.cli import run_real_data_factors
 
     calls = {}
 
@@ -25,6 +33,7 @@ def test_real_data_factor_cli_runs_pipeline(monkeypatch):
     monkeypatch.setattr(run_real_data_factors, "AkShareAStockFeed", lambda: object())
     monkeypatch.setattr(run_real_data_factors, "MySQLUniverseStorage", lambda config: object())
     monkeypatch.setattr(run_real_data_factors, "MySQLFactorStorage", lambda config: object())
+    monkeypatch.setattr(run_real_data_factors, "MySQLMarketDataStorage", lambda config: object())
 
     result = CliRunner().invoke(
         run_real_data_factors.main,

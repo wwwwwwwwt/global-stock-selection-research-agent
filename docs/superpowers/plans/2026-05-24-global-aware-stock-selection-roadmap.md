@@ -6,7 +6,7 @@
 
 **Architecture:** The system builds a canonical data core, computes stock-level factors and theory structures, adds top-down market context from global assets and news events, ranks a universe of stocks, and generates evidence-grounded explanations. Kronos becomes an optional factor source rather than the center of the product.
 
-**Tech Stack:** Python 3.13, pandas, sqlite3, pytest, click, optional Kronos adapter, future LLM provider integration.
+**Tech Stack:** Python 3.13, pandas, MySQL, pytest, click, optional Kronos adapter, future LLM provider integration.
 
 ---
 
