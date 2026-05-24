@@ -4,8 +4,8 @@ import click
 
 from openstockagent.config import DB_PATH
 from openstockagent.data.feeds.akshare import AkShareAStockFeed
+from openstockagent.data.feeds.polygon import PolygonStockFeed
 from openstockagent.data.feeds.registry import FeedRegistry
-from openstockagent.data.feeds.yahoo import YahooFinanceFeed
 from openstockagent.data.storage import SQLiteStorage
 from openstockagent.database.mysql import MySQLConfig
 from openstockagent.factors.storage import MySQLFactorStorage
@@ -32,7 +32,7 @@ def main(
 ):
     config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
     feed_registry = FeedRegistry()
-    feed_registry.register("US", "equity", interval, YahooFinanceFeed())
+    feed_registry.register("US", "equity", interval, PolygonStockFeed())
     feed_registry.register("CN", "equity", interval, AkShareAStockFeed())
     result = run_real_data_factor_pipeline(
         universe_id=universe_id,

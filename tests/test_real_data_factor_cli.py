@@ -21,7 +21,7 @@ def test_real_data_factor_cli_runs_pipeline(monkeypatch):
         )
 
     monkeypatch.setattr(run_real_data_factors, "run_real_data_factor_pipeline", fake_pipeline)
-    monkeypatch.setattr(run_real_data_factors, "YahooFinanceFeed", lambda: object())
+    monkeypatch.setattr(run_real_data_factors, "PolygonStockFeed", lambda: object())
     monkeypatch.setattr(run_real_data_factors, "AkShareAStockFeed", lambda: object())
     monkeypatch.setattr(run_real_data_factors, "MySQLUniverseStorage", lambda config: object())
     monkeypatch.setattr(run_real_data_factors, "MySQLFactorStorage", lambda config: object())

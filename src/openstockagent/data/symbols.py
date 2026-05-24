@@ -5,6 +5,10 @@ def to_source_symbol(instrument_id: str, source: str) -> str:
     asset_type, market, symbol = instrument_id.split(":", 2)
     if asset_type != "EQUITY":
         raise ValueError(f"Unsupported instrument id: {instrument_id}")
+    if source == "polygon":
+        if market == "US":
+            return symbol
+        raise ValueError(f"Unsupported market for Polygon symbol mapping: {market}")
     if source == "akshare":
         if market == "CN":
             return symbol

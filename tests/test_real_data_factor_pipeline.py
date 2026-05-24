@@ -9,6 +9,7 @@ from openstockagent.universe.models import UniverseMember
 
 def test_to_source_symbol_maps_instrument_ids_to_source_symbols():
     assert to_source_symbol("EQUITY:US:AAPL", source="yahoo") == "AAPL"
+    assert to_source_symbol("EQUITY:US:AAPL", source="polygon") == "AAPL"
     assert to_source_symbol("EQUITY:CN:600519", source="akshare") == "600519"
     assert to_source_symbol("EQUITY:CN:000001", source="akshare") == "000001"
     assert to_source_symbol("EQUITY:HK:09988", source="yahoo") == "9988.HK"
