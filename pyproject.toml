@@ -24,6 +24,7 @@ dependencies = [
 [project.scripts]
 stock-predict = "scripts.run_prediction:main"
 stock-factors = "scripts.run_real_data_factors:main"
+stock-screen = "openstockagent.cli.run_screening:main"
 
 [build-system]
 requires = ["hatchling"]
