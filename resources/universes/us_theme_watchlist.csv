@@ -1,0 +1,8 @@
+market,symbol,name,start_date,reason
+US,AAPL,Apple Inc.,2026-05-25,custom:mega_cap
+US,MSFT,Microsoft,2026-05-25,custom:mega_cap
+US,NVDA,NVIDIA,2026-05-25,custom:ai_compute
+US,GOOGL,Alphabet,2026-05-25,custom:ai_platform
+US,AMZN,Amazon,2026-05-25,custom:cloud_consumer
+US,META,Meta Platforms,2026-05-25,custom:ai_ads
+US,TSLA,Tesla,2026-05-25,custom:ev_robotics

@@ -33,6 +33,14 @@ uv run migrate-sqlite-market-data --sqlite-path data/market.db
 uv run stock-factors us_sample --as-of 2026-05-22 --period 1y
 uv run stock-screen us_sample --as-of 2026-05-22 --top-n 10
 
+# Build core stock universes
+uv run stock-universe build-core --market CN --as-of 2026-05-25
+uv run stock-universe build-core --market US --as-of 2026-05-25
+
+# Backfill 3-5 years of daily bars, then run daily incremental repair
+uv run stock-data sync --universe us_core --market US --as-of 2026-05-25 --mode backfill --lookback-years 3
+uv run stock-data sync --universe us_core --market US --as-of 2026-05-25 --mode incremental --incremental-days 10
+
 # Run tests
 uv run pytest tests/ -v
 ```
@@ -46,6 +54,8 @@ src/openstockagent/
 ├── data/
 │   ├── feeds/            # Polygon, AKShare, Yahoo-compatible adapters
 │   ├── sqlite_migration.py # One-time legacy SQLite migration
+│   ├── sync.py           # Universe-driven backfill and incremental sync
+│   ├── sync_storage.py   # MySQL sync plan/run records
 │   └── storage.py        # MySQL canonical stock market data storage
 ├── factors/              # Technical factor engine
 ├── screening/            # Screening, ranking, and result storage
@@ -77,12 +87,38 @@ External data and news
 
 Kronos remains useful, but it is not the product center. It can contribute optional factors such as direction score, confidence, and forecast volatility.
 
+## Core Universe And Data Sync
+
+The usable-stage stock universe is deliberately not full-market yet:
+
+```text
+CN core = CSI 300 + CSI 500 + custom industry leaders
+US core = S&P 500 + Nasdaq 100 + custom theme watchlist
+HK = deferred
+```
+
+Historical bootstrap keeps 3-5 years of daily adjusted bars. Daily operations fetch only a recent repair window, normally 5-10 natural days, and upsert into canonical MySQL `bars`.
+
+Detailed landing doc: [Core Universe And Daily Bar Sync](/Users/zhangtianwei/IT/openstockagent/docs/superpowers/specs/2026-05-25-core-universe-data-sync.md)
+
+```text
+stock-universe build-core
+  -> universes / universe_members
+  -> instruments / instrument_aliases
+
+stock-data sync
+  -> data_sync_plans / data_sync_runs
+  -> bars
+```
+
 ## Roadmap
 
 - [x] Project scaffold
 - [x] Yahoo Finance-compatible data feed
 - [x] MySQL canonical stock market data storage
 - [x] Legacy SQLite migration command
+- [x] Core stock universe builders for CN/US
+- [x] Universe-driven data sync plans and runs
 - [x] Kronos adapter and experimental CLI
 - [x] Global-aware stock selection architecture docs
 - [x] Canonical market data core

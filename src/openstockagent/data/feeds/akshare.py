@@ -72,6 +72,8 @@ def _start_from_period(end_date: str, period: str) -> str:
         start = end - pd.DateOffset(months=int(period[:-2]))
     elif period.endswith("y"):
         start = end - pd.DateOffset(years=int(period[:-1]))
+    elif period.endswith("d"):
+        start = end - pd.DateOffset(days=int(period[:-1]))
     else:
         raise ValueError(f"Unsupported period for AKShare A-share feed: {period}")
     return start.strftime("%Y%m%d")

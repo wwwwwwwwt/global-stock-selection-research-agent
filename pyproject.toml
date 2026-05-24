@@ -26,6 +26,8 @@ stock-predict = "openstockagent.cli.run_prediction:main"
 stock-factors = "openstockagent.cli.run_real_data_factors:main"
 stock-screen = "openstockagent.cli.run_screening:main"
 migrate-sqlite-market-data = "openstockagent.cli.migrate_sqlite_market_data:main"
+stock-universe = "openstockagent.cli.stock_universe:main"
+stock-data = "openstockagent.cli.stock_data:main"
 
 [build-system]
 requires = ["hatchling"]
