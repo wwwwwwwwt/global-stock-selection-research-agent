@@ -7,6 +7,11 @@ from .base import BaseDataFeed, BaseMarketDataFeed
 class YahooFinanceFeed(BaseDataFeed, BaseMarketDataFeed):
     source = "yahoo"
 
+    def __init__(self, ticker_factory=None, timeout: int = 10, repair: bool = True):
+        self.ticker_factory = ticker_factory or yf.Ticker
+        self.timeout = timeout
+        self.repair = repair
+
     def fetch_bars(
         self,
         source_symbol: str,
@@ -16,14 +21,23 @@ class YahooFinanceFeed(BaseDataFeed, BaseMarketDataFeed):
         period: str | None = None,
         adjusted: bool = True,
     ) -> pd.DataFrame:
-        ticker = yf.Ticker(source_symbol)
-        kwargs = {"interval": interval}
+        if period is None and (start is None or end is None):
+            raise ValueError("YahooFinanceFeed requires period or both start and end")
+
+        ticker = self.ticker_factory(source_symbol)
+        kwargs = {
+            "interval": interval,
+            "auto_adjust": adjusted,
+            "repair": self.repair,
+            "timeout": self.timeout,
+            "raise_errors": True,
+        }
         if period:
             kwargs["period"] = period
         else:
             kwargs["start"] = start
             kwargs["end"] = end
-        df = ticker.history(**kwargs, auto_adjust=adjusted)
+        df = ticker.history(**kwargs)
         if df.empty:
             raise ValueError(f"No data returned for {source_symbol}")
 

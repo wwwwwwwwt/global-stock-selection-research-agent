@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import pytest
 from openstockagent.data.feeds.base import BaseDataFeed
@@ -24,6 +26,7 @@ def test_base_data_feed_returns_dataframe():
     assert len(df) == 3
 
 
+@pytest.mark.skipif(os.getenv("RUN_NETWORK_TESTS") != "1", reason="Yahoo network test is opt-in")
 def test_yahoo_fetch_aapl():
     feed = YahooFinanceFeed()
     df = feed.fetch_ohlcv("AAPL", period="3mo")
