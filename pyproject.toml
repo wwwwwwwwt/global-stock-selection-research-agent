@@ -5,6 +5,7 @@ description = "Global-aware quantitative stock selection research agent"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "akshare>=1.17.0",
     "click>=8.4.1",
     "einops>=0.8.2",
     "huggingface-hub>=1.16.1",
@@ -21,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 stock-predict = "scripts.run_prediction:main"
+stock-factors = "scripts.run_real_data_factors:main"
 
 [build-system]
 requires = ["hatchling"]
