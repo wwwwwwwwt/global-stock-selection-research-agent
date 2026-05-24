@@ -1,7 +1,7 @@
 [project]
 name = "openstockagent"
 version = "0.1.0"
-description = "Local-first stock monitoring with Kronos prediction"
+description = "Global-aware quantitative stock selection research agent"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
