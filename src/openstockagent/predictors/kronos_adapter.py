@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import os
 
 # Add vendor Kronos to path
 KRONOS_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "vendor" / "Kronos"
@@ -13,20 +14,35 @@ from model import Kronos, KronosTokenizer, KronosPredictor as _KronosPredictor
 from .base import BasePredictor, PredictionResult
 
 
+# Local model directory (under project root)
+LOCAL_MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "models"
+
+
+def _resolve_model_path(hf_repo_id: str, local_name: str) -> str:
+    """Prefer local path if exists, otherwise fall back to HF Hub."""
+    local_path = LOCAL_MODELS_DIR / local_name
+    if local_path.exists() and (local_path / "config.json").exists():
+        return str(local_path)
+    return hf_repo_id
+
+
 class KronosStockPredictor(BasePredictor):
     MODELS = {
-        "mini": "NeoQuasar/Kronos-mini",
-        "small": "NeoQuasar/Kronos-small",
-        "base": "NeoQuasar/Kronos-base",
+        "mini": ("NeoQuasar/Kronos-mini", "kronos-mini"),
+        "small": ("NeoQuasar/Kronos-small", "kronos-small"),
+        "base": ("NeoQuasar/Kronos-base", "kronos-base"),
     }
 
     def __init__(self, variant: str = "small", device: str = "cpu"):
         self.variant = variant
         self.device = device
-        model_id = self.MODELS[variant]
+        hf_repo_id, local_name = self.MODELS[variant]
 
-        tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
-        model = Kronos.from_pretrained(model_id)
+        model_path = _resolve_model_path(hf_repo_id, local_name)
+        tokenizer_path = _resolve_model_path("NeoQuasar/Kronos-Tokenizer-base", "kronos-tokenizer")
+
+        tokenizer = KronosTokenizer.from_pretrained(tokenizer_path)
+        model = Kronos.from_pretrained(model_path)
 
         # Real KronosPredictor accepts: (model, tokenizer, device, max_context, clip)
         self.predictor = _KronosPredictor(
