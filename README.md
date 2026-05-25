@@ -32,6 +32,7 @@ uv run migrate-sqlite-market-data --sqlite-path data/market.db
 # Run real-data factors and stock screening against MySQL
 uv run stock-factors us_sample --as-of 2026-05-22 --period 1y
 uv run stock-screen us_sample --as-of 2026-05-22 --top-n 10
+uv run stock-recommend from-screen screen-run-id --universe-id us_sample --as-of 2026-05-22 --horizon 5d
 
 # Build core stock universes
 uv run stock-universe build-core --market CN --as-of 2026-05-25
@@ -58,6 +59,7 @@ src/openstockagent/
 │   ├── sync_storage.py   # MySQL sync plan/run records
 │   └── storage.py        # MySQL canonical stock market data storage
 ├── factors/              # Technical factor engine
+├── recommendations/      # Horizon-aware recommendations and review storage
 ├── screening/            # Screening, ranking, and result storage
 ├── universe/             # Stock pool models and MySQL storage
 ├── predictors/
@@ -111,6 +113,28 @@ stock-data sync
   -> bars
 ```
 
+## Recommendation And Review Loop
+
+Screening results are research rankings, not direct buy decisions. The recommendation layer adds horizon, action, expected review date, thesis, confirmation conditions, invalidation conditions, and later review metrics.
+
+```text
+screen_results
+  -> stock-recommend from-screen
+  -> recommendation_runs / recommendation_items
+  -> stock-recommend add-review
+  -> recommendation_reviews
+```
+
+Example:
+
+```bash
+uv run stock-recommend from-screen screen-run-id --universe-id us_core --as-of 2026-05-25 --horizon 5d --top-n 10
+
+uv run stock-recommend add-review rec-item-id --review-date 2026-06-01 --entry-price 100 --review-price 106 --benchmark-return 0.02 --thesis-status confirmed
+```
+
+This keeps historical `screen_results` immutable. Strategy changes should create new versions and new runs, while review records provide evidence for adjusting factor weights later.
+
 ## Roadmap
 
 - [x] Project scaffold
@@ -125,6 +149,7 @@ stock-data sync
 - [x] Universe management
 - [x] Factor engine MVP
 - [x] Screening and ranking MVP
+- [x] Recommendation and manual review loop MVP
 - [ ] Global market context MVP
 - [ ] News and event ingestion MVP
 - [ ] Classic theory engine, starting with Chan theory MVP
