@@ -3,9 +3,12 @@ import json
 from openstockagent.database.mysql import MySQLConfig
 from openstockagent.recommendations.models import RecommendationItem, RecommendationReview
 from openstockagent.recommendations.runner import (
+    build_review_from_bars,
     build_recommendation_review,
     build_recommendation_items,
+    horizon_strategy_preset,
     review_due_date_for,
+    run_due_recommendation_reviews,
     run_recommendation_pipeline,
 )
 from openstockagent.recommendations.storage import MySQLRecommendationStorage
@@ -63,6 +66,15 @@ def test_run_recommendation_pipeline_persists_run_and_items():
     assert screening_storage.calls == [("screen-test", True)]
 
 
+def test_horizon_strategy_presets_change_default_thresholds_and_versions():
+    preset = horizon_strategy_preset("1d")
+    items = build_recommendation_items("rec-run-test", "1d", [_screen_result("EQUITY:US:AAPL", rank=1, score=0.68)])
+
+    assert preset["strategy_name"] == "recommendation_1d_momentum"
+    assert preset["strategy_version"] == "v1"
+    assert items[0].action == "watch"
+
+
 def test_build_recommendation_review_calculates_returns_and_hit():
     review = build_recommendation_review(
         recommendation_id="rec-item-test",
@@ -80,6 +92,62 @@ def test_build_recommendation_review_calculates_returns_and_hit():
     assert review.excess_return == 0.04
     assert review.hit is True
     assert review.to_record()["hit"] == 1
+
+
+def test_build_review_from_bars_and_due_review_runner_writes_auto_reviews():
+    item = RecommendationItem(
+        recommendation_id="rec-item-test",
+        run_id="rec-run-test",
+        instrument_id="EQUITY:US:AAPL",
+        rank=1,
+        action="buy_candidate",
+        source_screen_rank=1,
+        source_screen_score=0.82,
+        expected_return=0.02,
+        expected_risk=0.1,
+        confidence=0.9,
+        thesis_json="{}",
+        confirmation_json="{}",
+        invalidation_json="{}",
+        risk_json="{}",
+        evidence_refs_json="{}",
+    )
+    bars = _bars([100.0, 104.0, 102.0, 108.0])
+
+    review = build_review_from_bars(
+        item,
+        bars,
+        recommendation_date="2026-05-22",
+        review_date="2026-05-29",
+        benchmark_return=0.03,
+        horizon="5d",
+    )
+
+    assert review is not None
+    assert review.realized_return == 0.08
+    assert review.excess_return == 0.05
+    assert review.max_drawdown == 0.0
+    assert review.max_favorable_return == 0.08
+
+    recommendation_storage = FakeRecommendationStorage()
+    recommendation_storage.due_items = [
+        {
+            "item": item,
+            "recommendation_date": "2026-05-22",
+            "review_due_date": "2026-05-29",
+            "horizon": "5d",
+        }
+    ]
+    result = run_due_recommendation_reviews(
+        as_of="2026-05-29",
+        recommendation_storage=recommendation_storage,
+        bar_storage=FakeBarStorage(bars),
+        benchmark_return=0.03,
+    )
+
+    assert result.due_items_seen == 1
+    assert result.reviews_written == 1
+    assert recommendation_storage.reviews[0].hit is True
 
 
 def test_mysql_recommendation_storage_creates_upserts_and_loads():
@@ -122,6 +190,9 @@ def test_mysql_recommendation_storage_creates_upserts_and_loads():
             {
                 **item.to_record(),
                 "rank": 1,
+                "recommendation_date": "2026-05-22",
+                "review_due_date": "2026-05-29",
+                "horizon": "5d",
             }
         ],
         review_rows=[review.to_record()],
@@ -142,6 +213,7 @@ def test_mysql_recommendation_storage_creates_upserts_and_loads():
     storage.upsert_recommendation_items([item])
     storage.upsert_recommendation_review(review)
     loaded_items = storage.load_recommendation_items("rec-run-test", actionable_only=True)
+    due_items = storage.load_due_recommendation_items("2026-05-29", limit=10)
     loaded_reviews = storage.load_recommendation_reviews("rec-item-test")
 
     executed_sql = "\n".join(factory.executed_sql)
@@ -152,6 +224,8 @@ def test_mysql_recommendation_storage_creates_upserts_and_loads():
     assert "DELETE FROM recommendation_items WHERE run_id = %s" in executed_sql
     assert "ON DUPLICATE KEY UPDATE" in executed_sql
     assert loaded_items[0].instrument_id == "EQUITY:US:MSFT"
+    assert due_items[0]["item"].instrument_id == "EQUITY:US:MSFT"
+    assert due_items[0]["horizon"] == "5d"
     assert loaded_items[0].action == "buy_candidate"
     assert loaded_reviews[0].hit is True
 
@@ -193,6 +267,17 @@ def _screen_result(instrument_id: str, *, rank: int, score: float) -> ScreenResu
     )
 
 
+def _bars(closes):
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "timestamp": [f"2026-05-{22 + index:02d}T00:00:00Z" for index, _ in enumerate(closes)],
+            "close": closes,
+        }
+    )
+
+
 class FakeScreeningStorage:
     def __init__(self, results):
         self.results = results
@@ -207,7 +292,9 @@ class FakeRecommendationStorage:
     def __init__(self):
         self.runs = []
         self.items = []
+        self.reviews = []
         self.deleted_run_ids = []
+        self.due_items = []
 
     def upsert_recommendation_run(self, run):
         self.runs.append(run)
@@ -218,6 +305,22 @@ class FakeRecommendationStorage:
     def upsert_recommendation_items(self, items):
         self.items.extend(items)
         return len(items)
+
+    def load_due_recommendation_items(self, as_of, limit=None):
+        return self.due_items[:limit]
+
+    def upsert_recommendation_review(self, review):
+        self.reviews.append(review)
+
+
+class FakeBarStorage:
+    def __init__(self, bars):
+        self.bars = bars
+        self.calls = []
+
+    def load_bars(self, instrument_id, interval, start, end):
+        self.calls.append((instrument_id, interval, start, end))
+        return self.bars
 
 
 class FakeConnectionFactory:
@@ -271,4 +374,3 @@ class FakeCursor:
         if "FROM recommendation_reviews" in self.last_sql:
             return self.factory.review_rows
         return self.factory.item_rows
-

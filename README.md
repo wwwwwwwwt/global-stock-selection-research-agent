@@ -7,7 +7,7 @@ OpenStockAgent is being built as a local-first research system for selecting sto
 ## Product Flow
 
 ```text
-Universe -> Data -> Factors -> Market Context -> Ranking -> Evidence -> LLM Explanation
+Market Reality -> Universe -> Data -> Factors -> Screening -> Recommendation -> Portfolio Decision -> Review
 ```
 
 The system should answer:
@@ -33,6 +33,8 @@ uv run migrate-sqlite-market-data --sqlite-path data/market.db
 uv run stock-factors us_sample --as-of 2026-05-22 --period 1y
 uv run stock-screen us_sample --as-of 2026-05-22 --top-n 10
 uv run stock-recommend from-screen screen-run-id --universe-id us_sample --as-of 2026-05-22 --horizon 5d
+uv run stock-recommend review-due --as-of 2026-05-29
+uv run stock-portfolio decide rec-run-id --account-id paper --capital 100000 --decision-date 2026-05-22 --market-regime neutral
 
 # Build core stock universes
 uv run stock-universe build-core --market CN --as-of 2026-05-25
@@ -59,6 +61,8 @@ src/openstockagent/
 │   ├── sync_storage.py   # MySQL sync plan/run records
 │   └── storage.py        # MySQL canonical stock market data storage
 ├── factors/              # Technical factor engine
+├── market/               # Trading calendar, instrument status, corporate actions
+├── portfolio/            # Position policy, decisions, and target allocations
 ├── recommendations/      # Horizon-aware recommendations and review storage
 ├── screening/            # Screening, ranking, and result storage
 ├── universe/             # Stock pool models and MySQL storage
@@ -80,11 +84,13 @@ The target architecture is documented in:
 ```text
 External data and news
   -> canonical storage
+  -> market reality constraints
   -> stock factors and theory structures
   -> global market context
   -> screening and ranking
-  -> candidate evidence pack
-  -> LLM explanation and daily report
+  -> horizon recommendations
+  -> portfolio decision and review
+  -> LLM evidence explanation
 ```
 
 Kronos remains useful, but it is not the product center. It can contribute optional factors such as direction score, confidence, and forecast volatility.
@@ -115,13 +121,20 @@ stock-data sync
 
 ## Recommendation And Review Loop
 
-Screening results are research rankings, not direct buy decisions. The recommendation layer adds horizon, action, expected review date, thesis, confirmation conditions, invalidation conditions, and later review metrics.
+Screening results are research rankings, not direct buy decisions. The recommendation layer adds horizon, action, expected review date, thesis, confirmation conditions, invalidation conditions, and later review metrics. Horizon presets now map to strategy versions:
+
+```text
+1d  -> recommendation_1d_momentum:v1
+5d  -> recommendation_5d_swing:v1
+20d -> recommendation_20d_trend:v1
+60d -> recommendation_60d_midterm:v1
+```
 
 ```text
 screen_results
   -> stock-recommend from-screen
   -> recommendation_runs / recommendation_items
-  -> stock-recommend add-review
+  -> stock-recommend review-due or add-review
   -> recommendation_reviews
 ```
 
@@ -130,10 +143,38 @@ Example:
 ```bash
 uv run stock-recommend from-screen screen-run-id --universe-id us_core --as-of 2026-05-25 --horizon 5d --top-n 10
 
+uv run stock-recommend review-due --as-of 2026-06-01 --benchmark-return 0.02
+
 uv run stock-recommend add-review rec-item-id --review-date 2026-06-01 --entry-price 100 --review-price 106 --benchmark-return 0.02 --thesis-status confirmed
 ```
 
 This keeps historical `screen_results` immutable. Strategy changes should create new versions and new runs, while review records provide evidence for adjusting factor weights later.
+
+## Market Reality And Portfolio Decisions
+
+The market reality layer stores facts that prevent unrealistic screening and review:
+
+```text
+trading_calendar
+instrument_status
+corporate_actions
+```
+
+The portfolio layer converts actionable recommendations into allocation decisions. It can allocate, hold cash, or stay empty when market regime or signal quality is poor.
+
+```bash
+uv run stock-portfolio decide rec-run-id --account-id paper --capital 100000 --decision-date 2026-05-25 --market-regime neutral
+```
+
+Core decision tables:
+
+```text
+portfolio_accounts
+portfolio_policies
+portfolio_positions
+portfolio_decisions
+target_allocations
+```
 
 ## Roadmap
 
@@ -150,6 +191,10 @@ This keeps historical `screen_results` immutable. Strategy changes should create
 - [x] Factor engine MVP
 - [x] Screening and ranking MVP
 - [x] Recommendation and manual review loop MVP
+- [x] Trading calendar, instrument status, and corporate action tables
+- [x] Automatic due recommendation review MVP
+- [x] Horizon-specific recommendation strategy presets
+- [x] Portfolio decision and empty-position MVP
 - [ ] Global market context MVP
 - [ ] News and event ingestion MVP
 - [ ] Classic theory engine, starting with Chan theory MVP

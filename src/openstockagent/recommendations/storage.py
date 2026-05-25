@@ -200,6 +200,65 @@ class MySQLRecommendationStorage:
             connection.close()
         return [_item_from_row(row) for row in rows]
 
+    def load_due_recommendation_items(self, as_of: str, limit: int | None = None) -> list[dict]:
+        sql = """SELECT i.recommendation_id, i.run_id, i.instrument_id, i.rank_position AS `rank`, i.action,
+                        i.source_screen_rank, i.source_screen_score, i.expected_return, i.expected_risk, i.confidence,
+                        i.thesis_json, i.confirmation_json, i.invalidation_json, i.risk_json, i.evidence_refs_json,
+                        r.recommendation_date, r.review_due_date, r.horizon
+                 FROM recommendation_items i
+                 JOIN recommendation_runs r ON i.run_id = r.run_id
+                 LEFT JOIN recommendation_reviews rv ON i.recommendation_id = rv.recommendation_id
+                 WHERE r.review_due_date <= %s
+                   AND i.action IN (%s, %s)
+                   AND rv.review_id IS NULL
+                 ORDER BY r.review_due_date ASC, i.rank_position ASC"""
+        params: list[object] = [as_of, "buy_candidate", "watch"]
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(limit)
+
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+        due = []
+        for row in rows:
+            values = _row_dict(
+                row,
+                [
+                    "recommendation_id",
+                    "run_id",
+                    "instrument_id",
+                    "rank",
+                    "action",
+                    "source_screen_rank",
+                    "source_screen_score",
+                    "expected_return",
+                    "expected_risk",
+                    "confidence",
+                    "thesis_json",
+                    "confirmation_json",
+                    "invalidation_json",
+                    "risk_json",
+                    "evidence_refs_json",
+                    "recommendation_date",
+                    "review_due_date",
+                    "horizon",
+                ],
+            )
+            due.append(
+                {
+                    "item": _item_from_row(values),
+                    "recommendation_date": values["recommendation_date"],
+                    "review_due_date": values["review_due_date"],
+                    "horizon": values["horizon"],
+                }
+            )
+        return due
+
     def upsert_recommendation_review(self, review: RecommendationReview) -> None:
         record = review.to_record()
         connection = self.connection_factory(self.config)
@@ -345,4 +404,3 @@ def _row_dict(row, columns: list[str]) -> dict:
     if isinstance(row, dict):
         return row
     return dict(zip(columns, row, strict=True))
-

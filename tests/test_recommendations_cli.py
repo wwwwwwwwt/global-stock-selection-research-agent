@@ -117,3 +117,35 @@ def test_recommendation_add_review_cli_saves_review(monkeypatch):
     assert saved["review"].excess_return == 0.04
     assert "hit=True" in result.output
 
+
+def test_recommendation_review_due_cli_runs_due_review_pipeline(monkeypatch):
+    from openstockagent.cli import run_recommendations
+    from openstockagent.recommendations.runner import DueReviewRunResult
+
+    calls = {}
+
+    def fake_review_due(**kwargs):
+        calls.update(kwargs)
+        return DueReviewRunResult(
+            as_of=kwargs["as_of"],
+            due_items_seen=2,
+            reviews_written=1,
+            skipped_count=1,
+            errors=[],
+            reviews=[],
+        )
+
+    monkeypatch.setattr(run_recommendations, "run_due_recommendation_reviews", fake_review_due)
+    monkeypatch.setattr(run_recommendations, "MySQLRecommendationStorage", lambda config: object())
+    monkeypatch.setattr(run_recommendations, "MySQLMarketDataStorage", lambda config: object())
+
+    result = CliRunner().invoke(
+        run_recommendations.main,
+        ["review-due", "--as-of", "2026-05-29", "--benchmark-return", "0.02", "--max-items", "5"],
+    )
+
+    assert result.exit_code == 0
+    assert calls["as_of"] == "2026-05-29"
+    assert calls["benchmark_return"] == 0.02
+    assert calls["max_items"] == 5
+    assert "reviews_written=1" in result.output

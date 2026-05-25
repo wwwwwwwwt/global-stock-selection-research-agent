@@ -32,6 +32,29 @@ DEFAULT_RECOMMENDATION_CONFIG: dict[str, Any] = {
     },
 }
 
+HORIZON_STRATEGY_PRESETS: dict[str, dict[str, Any]] = {
+    "1d": {
+        "strategy_name": "recommendation_1d_momentum",
+        "strategy_version": "v1",
+        "config": {"buy_threshold": 0.72, "watch_threshold": 0.62, "max_items": 10},
+    },
+    "5d": {
+        "strategy_name": "recommendation_5d_swing",
+        "strategy_version": "v1",
+        "config": {"buy_threshold": 0.65, "watch_threshold": 0.55, "max_items": 20},
+    },
+    "20d": {
+        "strategy_name": "recommendation_20d_trend",
+        "strategy_version": "v1",
+        "config": {"buy_threshold": 0.60, "watch_threshold": 0.52, "max_items": 30},
+    },
+    "60d": {
+        "strategy_name": "recommendation_60d_midterm",
+        "strategy_version": "v1",
+        "config": {"buy_threshold": 0.58, "watch_threshold": 0.50, "max_items": 40},
+    },
+}
+
 
 @dataclass(frozen=True)
 class RecommendationRunResult:
@@ -49,6 +72,16 @@ class RecommendationRunResult:
     items: list[RecommendationItem] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class DueReviewRunResult:
+    as_of: str
+    due_items_seen: int
+    reviews_written: int
+    skipped_count: int
+    errors: list[str]
+    reviews: list[RecommendationReview] = field(default_factory=list)
+
+
 def run_recommendation_pipeline(
     *,
     screen_run_id: str,
@@ -57,13 +90,16 @@ def run_recommendation_pipeline(
     horizon: str,
     screening_storage,
     recommendation_storage,
-    strategy_name: str = "recommendation_mvp",
-    strategy_version: str = "v1",
+    strategy_name: str | None = None,
+    strategy_version: str | None = None,
     market_regime: str = "unknown",
     config: dict[str, Any] | None = None,
     run_id: str | None = None,
 ) -> RecommendationRunResult:
-    config = _merge_config(config)
+    preset = horizon_strategy_preset(horizon)
+    strategy_name = strategy_name or preset["strategy_name"]
+    strategy_version = strategy_version or preset["strategy_version"]
+    config = _merge_config({**preset["config"], **(config or {})})
     review_due_date = review_due_date_for(recommendation_date, horizon)
     run_id = run_id or _stable_run_id(screen_run_id, recommendation_date, horizon, strategy_name, strategy_version)
     screen_results = screening_storage.load_screen_results(screen_run_id, selected_only=True)
@@ -111,7 +147,7 @@ def build_recommendation_items(
     screen_results: list[ScreenResult],
     config: dict[str, Any] | None = None,
 ) -> list[RecommendationItem]:
-    config = _merge_config(config)
+    config = _merge_config({**horizon_strategy_preset(horizon)["config"], **(config or {})})
     _horizon_days(horizon)
     max_items = int(config["max_items"])
     ordered_results = sorted(screen_results, key=lambda result: (result.rank, -result.total_score, result.instrument_id))[:max_items]
@@ -162,9 +198,116 @@ def build_recommendation_review(
     )
 
 
+def run_due_recommendation_reviews(
+    *,
+    as_of: str,
+    recommendation_storage,
+    bar_storage,
+    benchmark_return: float | None = None,
+    max_items: int | None = None,
+) -> DueReviewRunResult:
+    due_items = recommendation_storage.load_due_recommendation_items(as_of, limit=max_items)
+    reviews = []
+    errors = []
+    skipped = 0
+    for due_item in due_items:
+        item = due_item["item"]
+        recommendation_date = due_item["recommendation_date"]
+        review_due_date = due_item["review_due_date"]
+        horizon = due_item["horizon"]
+        try:
+            frame = bar_storage.load_bars(
+                item.instrument_id,
+                "1d",
+                f"{recommendation_date}T00:00:00Z",
+                f"{as_of}T23:59:59Z",
+            )
+            review = build_review_from_bars(
+                item,
+                frame,
+                recommendation_date=str(recommendation_date),
+                review_date=str(review_due_date),
+                benchmark_return=benchmark_return,
+                horizon=horizon,
+            )
+            if review is None:
+                skipped += 1
+                continue
+            recommendation_storage.upsert_recommendation_review(review)
+            reviews.append(review)
+        except Exception as exc:
+            errors.append(f"{item.recommendation_id}: {exc}")
+    return DueReviewRunResult(
+        as_of=as_of,
+        due_items_seen=len(due_items),
+        reviews_written=len(reviews),
+        skipped_count=skipped,
+        errors=errors,
+        reviews=reviews,
+    )
+
+
+def build_review_from_bars(
+    item: RecommendationItem,
+    bars,
+    *,
+    recommendation_date: str,
+    review_date: str,
+    benchmark_return: float | None = None,
+    horizon: str,
+) -> RecommendationReview | None:
+    if bars.empty:
+        return None
+    frame = bars.copy().sort_values("timestamp")
+    frame["close"] = pd.to_numeric(frame["close"], errors="coerce")
+    frame = frame.dropna(subset=["close"])
+    if frame.empty:
+        return None
+    entry_price = float(frame.iloc[0]["close"])
+    review_price = float(frame.iloc[-1]["close"])
+    if entry_price <= 0:
+        return None
+    path_returns = frame["close"] / entry_price - 1.0
+    factor_snapshot = {
+        "source_screen_rank": item.source_screen_rank,
+        "source_screen_score": item.source_screen_score,
+        "action": item.action,
+        "confidence": item.confidence,
+    }
+    review_notes = {
+        "auto_review": True,
+        "recommendation_date": recommendation_date,
+        "horizon": horizon,
+        "bars_seen": int(len(frame)),
+    }
+    return build_recommendation_review(
+        recommendation_id=item.recommendation_id,
+        review_date=review_date,
+        entry_price=entry_price,
+        review_price=review_price,
+        benchmark_return=benchmark_return,
+        max_drawdown=round(float(path_returns.min()), 8),
+        max_favorable_return=round(float(path_returns.max()), 8),
+        thesis_status="confirmed" if review_price >= entry_price else "invalidated",
+        invalidation_triggered=review_price < entry_price,
+        factor_snapshot_json=json.dumps(factor_snapshot, sort_keys=True),
+        review_notes_json=json.dumps(review_notes, sort_keys=True),
+    )
+
+
 def review_due_date_for(recommendation_date: str, horizon: str) -> str:
     days = _horizon_days(horizon)
     return (pd.Timestamp(recommendation_date) + pd.offsets.BDay(days)).strftime("%Y-%m-%d")
+
+
+def horizon_strategy_preset(horizon: str) -> dict[str, Any]:
+    _horizon_days(horizon)
+    preset = HORIZON_STRATEGY_PRESETS[horizon]
+    return {
+        "strategy_name": preset["strategy_name"],
+        "strategy_version": preset["strategy_version"],
+        "config": preset["config"].copy(),
+    }
 
 
 def _item_from_screen_result(
@@ -297,4 +440,3 @@ def _stable_item_id(run_id: str, instrument_id: str) -> str:
 def _stable_review_id(recommendation_id: str, review_date: str) -> str:
     payload = "|".join([recommendation_id, review_date])
     return f"rec-review-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
-

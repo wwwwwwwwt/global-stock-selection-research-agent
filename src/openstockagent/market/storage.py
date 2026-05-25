@@ -1,0 +1,269 @@
+"""MySQL-backed market reality storage."""
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from openstockagent.database.mysql import MySQLConfig
+from openstockagent.market.models import CorporateAction, InstrumentStatus, TradingCalendarDay
+
+
+TRADING_CALENDAR_DDL = """
+CREATE TABLE IF NOT EXISTS trading_calendar (
+  market VARCHAR(32) NOT NULL,
+  calendar_date DATE NOT NULL,
+  is_trading_day TINYINT(1) NOT NULL,
+  session_type VARCHAR(32) NOT NULL,
+  open_time VARCHAR(16) NULL,
+  close_time VARCHAR(16) NULL,
+  source VARCHAR(64) NOT NULL,
+  notes_json JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (market, calendar_date),
+  KEY idx_trading_calendar_next (market, is_trading_day, calendar_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+INSTRUMENT_STATUS_DDL = """
+CREATE TABLE IF NOT EXISTS instrument_status (
+  instrument_id VARCHAR(128) NOT NULL,
+  status_date DATE NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  is_tradable TINYINT(1) NOT NULL,
+  is_st TINYINT(1) NOT NULL,
+  is_suspended TINYINT(1) NOT NULL,
+  limit_up DOUBLE NULL,
+  limit_down DOUBLE NULL,
+  reason_json JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (instrument_id, status_date),
+  KEY idx_instrument_status_date (status_date, is_tradable, is_suspended, is_st)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+CORPORATE_ACTIONS_DDL = """
+CREATE TABLE IF NOT EXISTS corporate_actions (
+  action_id VARCHAR(128) NOT NULL,
+  instrument_id VARCHAR(128) NOT NULL,
+  action_date DATE NOT NULL,
+  ex_date DATE NULL,
+  action_type VARCHAR(64) NOT NULL,
+  adjustment_factor DOUBLE NULL,
+  cash_amount DOUBLE NULL,
+  split_ratio DOUBLE NULL,
+  source VARCHAR(64) NOT NULL,
+  payload_json JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (action_id),
+  KEY idx_corporate_actions_instrument (instrument_id, action_date),
+  KEY idx_corporate_actions_ex_date (ex_date, action_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+
+class MySQLMarketRealityStorage:
+    def __init__(
+        self,
+        config: MySQLConfig | None = None,
+        connection_factory: Callable[[MySQLConfig], object] | None = None,
+        ensure_tables: bool = True,
+    ):
+        self.config = config or MySQLConfig.from_env()
+        self.connection_factory = connection_factory or _connect
+        if ensure_tables:
+            self.ensure_tables()
+
+    def ensure_tables(self) -> None:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(TRADING_CALENDAR_DDL)
+                cursor.execute(INSTRUMENT_STATUS_DDL)
+                cursor.execute(CORPORATE_ACTIONS_DDL)
+            connection.commit()
+        finally:
+            connection.close()
+
+    def upsert_trading_calendar_days(self, days: list[TradingCalendarDay]) -> int:
+        if not days:
+            return 0
+        records = [day.to_record() for day in days]
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO trading_calendar (
+                        market, calendar_date, is_trading_day, session_type, open_time,
+                        close_time, source, notes_json
+                    ) VALUES (
+                        %(market)s, %(calendar_date)s, %(is_trading_day)s, %(session_type)s, %(open_time)s,
+                        %(close_time)s, %(source)s, %(notes_json)s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        is_trading_day = VALUES(is_trading_day),
+                        session_type = VALUES(session_type),
+                        open_time = VALUES(open_time),
+                        close_time = VALUES(close_time),
+                        source = VALUES(source),
+                        notes_json = VALUES(notes_json)""",
+                    records,
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return len(records)
+
+    def upsert_instrument_statuses(self, statuses: list[InstrumentStatus]) -> int:
+        if not statuses:
+            return 0
+        records = [status.to_record() for status in statuses]
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO instrument_status (
+                        instrument_id, status_date, status, is_tradable, is_st,
+                        is_suspended, limit_up, limit_down, reason_json
+                    ) VALUES (
+                        %(instrument_id)s, %(status_date)s, %(status)s, %(is_tradable)s, %(is_st)s,
+                        %(is_suspended)s, %(limit_up)s, %(limit_down)s, %(reason_json)s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        status = VALUES(status),
+                        is_tradable = VALUES(is_tradable),
+                        is_st = VALUES(is_st),
+                        is_suspended = VALUES(is_suspended),
+                        limit_up = VALUES(limit_up),
+                        limit_down = VALUES(limit_down),
+                        reason_json = VALUES(reason_json)""",
+                    records,
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return len(records)
+
+    def upsert_corporate_actions(self, actions: list[CorporateAction]) -> int:
+        if not actions:
+            return 0
+        records = [action.to_record() for action in actions]
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO corporate_actions (
+                        action_id, instrument_id, action_date, ex_date, action_type,
+                        adjustment_factor, cash_amount, split_ratio, source, payload_json
+                    ) VALUES (
+                        %(action_id)s, %(instrument_id)s, %(action_date)s, %(ex_date)s, %(action_type)s,
+                        %(adjustment_factor)s, %(cash_amount)s, %(split_ratio)s, %(source)s, %(payload_json)s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        instrument_id = VALUES(instrument_id),
+                        action_date = VALUES(action_date),
+                        ex_date = VALUES(ex_date),
+                        action_type = VALUES(action_type),
+                        adjustment_factor = VALUES(adjustment_factor),
+                        cash_amount = VALUES(cash_amount),
+                        split_ratio = VALUES(split_ratio),
+                        source = VALUES(source),
+                        payload_json = VALUES(payload_json)""",
+                    records,
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return len(records)
+
+    def load_instrument_status(self, instrument_id: str, as_of: str) -> InstrumentStatus | None:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT instrument_id, status_date, status, is_tradable, is_st,
+                              is_suspended, limit_up, limit_down, reason_json
+                       FROM instrument_status
+                       WHERE instrument_id = %s AND status_date <= %s
+                       ORDER BY status_date DESC LIMIT 1""",
+                    [instrument_id, as_of],
+                )
+                row = cursor.fetchone()
+        finally:
+            connection.close()
+        return _status_from_row(row) if row is not None else None
+
+    def next_trading_date(self, market: str, start_date: str, offset: int = 1) -> str | None:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT calendar_date
+                       FROM trading_calendar
+                       WHERE market = %s AND calendar_date > %s AND is_trading_day = 1
+                       ORDER BY calendar_date ASC
+                       LIMIT %s""",
+                    [market.upper(), start_date, offset],
+                )
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+        if len(rows) < offset:
+            return None
+        row = rows[-1]
+        value = row["calendar_date"] if isinstance(row, dict) else row[0]
+        return str(value)
+
+    def previous_trading_date(self, market: str, as_of: str) -> str | None:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT calendar_date
+                       FROM trading_calendar
+                       WHERE market = %s AND calendar_date < %s AND is_trading_day = 1
+                       ORDER BY calendar_date DESC
+                       LIMIT 1""",
+                    [market.upper(), as_of],
+                )
+                row = cursor.fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        value = row["calendar_date"] if isinstance(row, dict) else row[0]
+        return str(value)
+
+
+def _connect(config: MySQLConfig):
+    import pymysql
+    from pymysql.cursors import DictCursor
+
+    return pymysql.connect(**config.to_connection_kwargs(), cursorclass=DictCursor)
+
+
+def _status_from_row(row) -> InstrumentStatus:
+    values = row if isinstance(row, dict) else {
+        "instrument_id": row[0],
+        "status_date": row[1],
+        "status": row[2],
+        "is_tradable": row[3],
+        "is_st": row[4],
+        "is_suspended": row[5],
+        "limit_up": row[6],
+        "limit_down": row[7],
+        "reason_json": row[8],
+    }
+    return InstrumentStatus(
+        instrument_id=values["instrument_id"],
+        status_date=str(values["status_date"]),
+        status=values["status"],
+        is_tradable=bool(values["is_tradable"]),
+        is_st=bool(values["is_st"]),
+        is_suspended=bool(values["is_suspended"]),
+        limit_up=float(values["limit_up"]) if values["limit_up"] is not None else None,
+        limit_down=float(values["limit_down"]) if values["limit_down"] is not None else None,
+        reason_json=values["reason_json"],
+    )
+
