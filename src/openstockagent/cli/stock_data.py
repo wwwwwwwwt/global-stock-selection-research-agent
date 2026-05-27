@@ -6,11 +6,13 @@ import click
 from openstockagent.data.feeds.akshare import AkShareAStockFeed
 from openstockagent.data.feeds.polygon import PolygonStockFeed
 from openstockagent.data.feeds.registry import FeedRegistry
-from openstockagent.data.feeds.tushare import TUSHARE_TOKEN_ENV, TushareAStockFeed
+from openstockagent.data.feeds.tushare import TUSHARE_TOKEN_ENV, TushareAStockFeed, TushareReferenceFeed
 from openstockagent.data.storage import MySQLMarketDataStorage
 from openstockagent.data.sync import build_sync_plan, run_data_sync_plan
 from openstockagent.data.sync_storage import MySQLDataSyncStorage
 from openstockagent.database.mysql import MySQLConfig
+from openstockagent.market.storage import MySQLMarketRealityStorage
+from openstockagent.pipelines.tushare_reference import run_tushare_reference_sync
 from openstockagent.universe.storage import MySQLUniverseStorage
 
 
@@ -94,6 +96,47 @@ def sync(
         click.echo("Errors:")
         for error in result.errors:
             click.echo(f"- {error}")
+
+
+@main.command("sync-cn-reference")
+@click.option("--start", required=True, help="Reference sync start date, e.g. 2026-05-01")
+@click.option("--end", required=True, help="Reference sync end date, e.g. 2026-05-28")
+@click.option("--status-date", default=None, help="Status date for ST/suspend/limit/adj_factor; defaults to --end")
+@click.option("--mysql-url", default="jdbc:mysql://127.0.0.1:13306/openstockagent", help="MySQL JDBC URL")
+@click.option("--mysql-user", default="root", help="MySQL username")
+@click.option("--mysql-password", default="123456", help="MySQL password")
+def sync_cn_reference(
+    start: str,
+    end: str,
+    status_date: str | None,
+    mysql_url: str,
+    mysql_user: str,
+    mysql_password: str,
+):
+    """Synchronize Tushare A-share reference and market-reality data."""
+    token = os.getenv(TUSHARE_TOKEN_ENV)
+    if not token:
+        raise click.ClickException(f"{TUSHARE_TOKEN_ENV} is required for Tushare reference sync")
+    config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
+    result = run_tushare_reference_sync(
+        start=start,
+        end=end,
+        status_date=status_date or end,
+        reference_feed=TushareReferenceFeed(token=token),
+        market_data_storage=MySQLMarketDataStorage(config=config),
+        market_reality_storage=MySQLMarketRealityStorage(config=config),
+    )
+    click.echo(
+        "Tushare reference sync complete: "
+        f"market={result.market} "
+        f"period={result.start}..{result.end} "
+        f"status_date={result.status_date} "
+        f"instruments_written={result.instruments_written} "
+        f"aliases_written={result.aliases_written} "
+        f"calendar_days_written={result.calendar_days_written} "
+        f"statuses_written={result.statuses_written} "
+        f"corporate_actions_written={result.corporate_actions_written}"
+    )
 
 
 def _cn_feed_from_env():

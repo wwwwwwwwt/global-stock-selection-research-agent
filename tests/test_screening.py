@@ -2,6 +2,7 @@ import json
 
 from openstockagent.database.mysql import MySQLConfig
 from openstockagent.factors.models import FactorValue
+from openstockagent.market.models import InstrumentStatus
 from openstockagent.universe.models import UniverseMember
 
 
@@ -44,6 +45,44 @@ def test_rank_screen_candidates_applies_filters_and_scores_missing_optional_fact
     assert reasons["top_components"][0]["component"] in {"momentum_score", "trend_score"}
     assert "volatility_score" in risks
     assert "return_20d" in {item["factor_name"] for item in evidence_refs["factors"]}
+
+
+def test_rank_screen_candidates_filters_market_reality_statuses():
+    from openstockagent.screening.scoring import build_default_strategy, rank_screen_candidates
+
+    members = [
+        UniverseMember("cn_sample", "EQUITY:CN:000001", "2024-01-01"),
+        UniverseMember("cn_sample", "EQUITY:CN:000002", "2024-01-01"),
+        UniverseMember("cn_sample", "EQUITY:CN:000003", "2024-01-01"),
+        UniverseMember("cn_sample", "EQUITY:CN:000004", "2024-01-01"),
+    ]
+    values = [
+        *_factor_set("EQUITY:CN:000001", momentum=0.80, trend=0.80, volume=0.80, volatility=0.80, turnover=2_000_000),
+        *_factor_set("EQUITY:CN:000002", momentum=0.90, trend=0.90, volume=0.90, volatility=0.90, turnover=2_000_000),
+        *_factor_set("EQUITY:CN:000003", momentum=0.95, trend=0.95, volume=0.95, volatility=0.95, turnover=2_000_000),
+        *_factor_set(
+            "EQUITY:CN:000004",
+            momentum=0.99,
+            trend=0.99,
+            volume=0.99,
+            volatility=0.99,
+            turnover=2_000_000,
+            latest_close=10.0,
+        ),
+    ]
+    statuses = {
+        "EQUITY:CN:000002": InstrumentStatus("EQUITY:CN:000002", "2026-05-22", "st", True, is_st=True),
+        "EQUITY:CN:000003": InstrumentStatus(
+            "EQUITY:CN:000003", "2026-05-22", "suspended", False, is_suspended=True
+        ),
+        "EQUITY:CN:000004": InstrumentStatus(
+            "EQUITY:CN:000004", "2026-05-22", "active", True, limit_up=10.0, limit_down=8.0
+        ),
+    }
+
+    results = rank_screen_candidates("screen-test", members, values, build_default_strategy(), statuses)
+
+    assert [result.instrument_id for result in results] == ["EQUITY:CN:000001"]
 
 
 def test_mysql_screening_storage_creates_upserts_and_loads_results():
@@ -160,6 +199,49 @@ def test_run_screening_pipeline_persists_strategy_run_and_ranked_results():
     assert screening_storage.results[1].selected is False
 
 
+def test_run_screening_pipeline_loads_market_reality_statuses():
+    from openstockagent.screening.runner import run_screening_pipeline
+    from openstockagent.screening.scoring import build_default_strategy
+
+    universe_storage = FakeUniverseStorage(
+        [
+            UniverseMember("cn_sample", "EQUITY:CN:000001", "2024-01-01"),
+            UniverseMember("cn_sample", "EQUITY:CN:000002", "2024-01-01"),
+        ]
+    )
+    factor_storage = FakeFactorStorage(
+        [
+            *_factor_set("EQUITY:CN:000001", momentum=0.60, trend=0.55, volume=0.50, volatility=0.60, turnover=2_000_000),
+            *_factor_set("EQUITY:CN:000002", momentum=0.92, trend=0.88, volume=0.75, volatility=0.70, turnover=4_000_000),
+        ]
+    )
+    screening_storage = FakeScreeningStorage()
+    market_reality_storage = FakeMarketRealityStorage(
+        {
+            "EQUITY:CN:000002": InstrumentStatus("EQUITY:CN:000002", "2026-05-22", "st", True, is_st=True),
+        }
+    )
+
+    result = run_screening_pipeline(
+        universe_id="cn_sample",
+        as_of="2026-05-22",
+        interval="1d",
+        universe_storage=universe_storage,
+        factor_storage=factor_storage,
+        screening_storage=screening_storage,
+        market_reality_storage=market_reality_storage,
+        strategy=build_default_strategy(max_candidates=5),
+    )
+
+    assert result.ranked_count == 1
+    assert result.filtered_count == 1
+    assert screening_storage.results[0].instrument_id == "EQUITY:CN:000001"
+    assert market_reality_storage.calls == [
+        ("EQUITY:CN:000001", "2026-05-22"),
+        ("EQUITY:CN:000002", "2026-05-22"),
+    ]
+
+
 def _factor_set(
     instrument_id: str,
     *,
@@ -168,8 +250,12 @@ def _factor_set(
     volume: float,
     volatility: float,
     turnover: float,
+    latest_close: float | None = None,
 ) -> list[FactorValue]:
-    evidence = json.dumps({"bar_count": 70, "end_timestamp": "2026-05-22T00:00:00Z"}, sort_keys=True)
+    evidence_payload = {"bar_count": 70, "end_timestamp": "2026-05-22T00:00:00Z"}
+    if latest_close is not None:
+        evidence_payload["latest_close"] = latest_close
+    evidence = json.dumps(evidence_payload, sort_keys=True)
     return [
         FactorValue(instrument_id, "2026-05-22", "1d", "return_5d", 0.01, percentile=momentum, evidence_json=evidence),
         FactorValue(instrument_id, "2026-05-22", "1d", "return_20d", 0.03, percentile=momentum, evidence_json=evidence),
@@ -230,6 +316,16 @@ class FakeScreeningStorage:
     def delete_screen_results(self, run_id):
         self.deleted_run_ids = getattr(self, "deleted_run_ids", [])
         self.deleted_run_ids.append(run_id)
+
+
+class FakeMarketRealityStorage:
+    def __init__(self, statuses):
+        self.statuses = statuses
+        self.calls = []
+
+    def load_instrument_status(self, instrument_id, as_of):
+        self.calls.append((instrument_id, as_of))
+        return self.statuses.get(instrument_id)
 
 
 class FakeConnectionFactory:

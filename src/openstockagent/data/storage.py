@@ -245,6 +245,38 @@ class MySQLMarketDataStorage:
         finally:
             connection.close()
 
+    def upsert_instruments(self, instruments: list[Instrument]) -> int:
+        if not instruments:
+            return 0
+        records = [instrument.to_record() for instrument in instruments]
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO instruments (
+                        instrument_id, symbol, market, exchange, asset_type, currency,
+                        name, timezone, active, metadata_json
+                    ) VALUES (
+                        %(instrument_id)s, %(symbol)s, %(market)s, %(exchange)s, %(asset_type)s, %(currency)s,
+                        %(name)s, %(timezone)s, %(active)s, %(metadata_json)s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        symbol = VALUES(symbol),
+                        market = VALUES(market),
+                        exchange = VALUES(exchange),
+                        asset_type = VALUES(asset_type),
+                        currency = VALUES(currency),
+                        name = VALUES(name),
+                        timezone = VALUES(timezone),
+                        active = VALUES(active),
+                        metadata_json = VALUES(metadata_json)""",
+                    records,
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return len(records)
+
     def upsert_instrument_alias(self, alias: InstrumentAlias) -> None:
         record = alias.to_record()
         connection = self.connection_factory(self.config)
@@ -264,6 +296,29 @@ class MySQLMarketDataStorage:
             connection.commit()
         finally:
             connection.close()
+
+    def upsert_instrument_aliases(self, aliases: list[InstrumentAlias]) -> int:
+        if not aliases:
+            return 0
+        records = [alias.to_record() for alias in aliases]
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO instrument_aliases (
+                        instrument_id, source, source_symbol, priority
+                    ) VALUES (
+                        %(instrument_id)s, %(source)s, %(source_symbol)s, %(priority)s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        instrument_id = VALUES(instrument_id),
+                        priority = VALUES(priority)""",
+                    records,
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return len(records)
 
     def resolve_alias(self, source: str, source_symbol: str) -> str | None:
         connection = self.connection_factory(self.config)

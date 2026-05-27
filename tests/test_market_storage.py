@@ -40,6 +40,27 @@ def test_mysql_market_storage_creates_core_canonical_tables_and_resolves_alias()
     assert "ON DUPLICATE KEY UPDATE" in executed_sql
 
 
+def test_mysql_market_storage_bulk_upserts_instruments_and_aliases():
+    factory = FakeConnectionFactory()
+    storage = MySQLMarketDataStorage(config=MYSQL_CONFIG, connection_factory=factory)
+    instruments = [
+        Instrument("EQUITY:CN:000001", "000001", "CN", "SZSE", "equity", "CNY", "平安银行", "Asia/Shanghai"),
+        Instrument("EQUITY:CN:600519", "600519", "CN", "SSE", "equity", "CNY", "贵州茅台", "Asia/Shanghai"),
+    ]
+    aliases = [
+        InstrumentAlias("EQUITY:CN:000001", "tushare", "000001.SZ"),
+        InstrumentAlias("EQUITY:CN:600519", "tushare", "600519.SH"),
+    ]
+
+    assert storage.upsert_instruments(instruments) == 2
+    assert storage.upsert_instrument_aliases(aliases) == 2
+
+    executed_sql = "\n".join(factory.executed_sql)
+    assert "INSERT INTO instruments" in executed_sql
+    assert "INSERT INTO instrument_aliases" in executed_sql
+    assert factory.executed_params[-1]["source_symbol"] == "600519.SH"
+
+
 def test_mysql_market_storage_upserts_and_loads_canonical_bars():
     factory = FakeConnectionFactory(
         fetchall_rows=[

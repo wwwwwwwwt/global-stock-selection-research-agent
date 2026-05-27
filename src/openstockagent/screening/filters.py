@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from openstockagent.factors.models import FactorValue
+from openstockagent.market.models import InstrumentStatus
 
 
 @dataclass(frozen=True)
@@ -14,7 +15,11 @@ class CandidateFilterResult:
     flags: list[str]
 
 
-def apply_hard_filters(factors_by_name: dict[str, FactorValue], config: dict[str, Any]) -> CandidateFilterResult:
+def apply_hard_filters(
+    factors_by_name: dict[str, FactorValue],
+    config: dict[str, Any],
+    instrument_status: InstrumentStatus | None = None,
+) -> CandidateFilterResult:
     hard_filters = config.get("hard_filters", {})
     flags = []
 
@@ -32,6 +37,26 @@ def apply_hard_filters(factors_by_name: dict[str, FactorValue], config: dict[str
 
     if hard_filters.get("exclude_suspended", True) and _any_evidence_flag(factors_by_name.values(), "suspended", True):
         flags.append("suspended")
+
+    if instrument_status is not None:
+        if hard_filters.get("exclude_suspended", True) and instrument_status.is_suspended:
+            flags.append("suspended")
+        if hard_filters.get("exclude_st", True) and instrument_status.is_st:
+            flags.append("st")
+        latest_close = _latest_close(factors_by_name.values())
+        if latest_close is not None:
+            if (
+                hard_filters.get("exclude_limit_up", True)
+                and instrument_status.limit_up is not None
+                and latest_close >= instrument_status.limit_up * 0.999
+            ):
+                flags.append("limit_up")
+            if (
+                hard_filters.get("exclude_limit_down", True)
+                and instrument_status.limit_down is not None
+                and latest_close <= instrument_status.limit_down * 1.001
+            ):
+                flags.append("limit_down")
 
     if hard_filters.get("exclude_incomplete_latest_bar", True) and _any_evidence_flag(
         factors_by_name.values(), "latest_bar_complete", False
@@ -61,6 +86,14 @@ def _max_bar_count(values) -> int:
 
 def _any_evidence_flag(values, key: str, expected: bool) -> bool:
     return any(_evidence(value).get(key) is expected for value in values)
+
+
+def _latest_close(values) -> float | None:
+    for value in values:
+        close = _evidence(value).get("latest_close")
+        if close is not None:
+            return float(close)
+    return None
 
 
 def _evidence(value: FactorValue) -> dict:

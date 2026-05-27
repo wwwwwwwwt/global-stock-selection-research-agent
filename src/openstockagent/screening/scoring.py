@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from openstockagent.factors.models import FactorValue
+from openstockagent.market.models import InstrumentStatus
 from openstockagent.screening.filters import apply_hard_filters
 from openstockagent.screening.models import ScreenResult, ScreenStrategy
 from openstockagent.universe.models import UniverseMember
@@ -20,6 +21,9 @@ DEFAULT_SCREEN_CONFIG: dict[str, Any] = {
         "min_bar_count": 0,
         "min_factor_count": 1,
         "exclude_suspended": True,
+        "exclude_st": True,
+        "exclude_limit_up": True,
+        "exclude_limit_down": True,
         "exclude_incomplete_latest_bar": True,
         "exclude_severe_data_quality_issues": True,
     },
@@ -70,14 +74,20 @@ def rank_screen_candidates(
     members: list[UniverseMember],
     factor_values: list[FactorValue],
     strategy: ScreenStrategy,
+    status_by_instrument: dict[str, InstrumentStatus] | None = None,
 ) -> list[ScreenResult]:
     values_by_instrument = _group_factor_values(factor_values)
+    status_by_instrument = status_by_instrument or {}
     max_candidates = int(strategy.config.get("max_candidates", 20))
     scored = []
 
     for member in members:
         factors_by_name = values_by_instrument.get(member.instrument_id, {})
-        filter_result = apply_hard_filters(factors_by_name, strategy.config)
+        filter_result = apply_hard_filters(
+            factors_by_name,
+            strategy.config,
+            instrument_status=status_by_instrument.get(member.instrument_id),
+        )
         if not filter_result.passed:
             continue
         scored.append(_score_member(run_id, member.instrument_id, factors_by_name, strategy, filter_result.flags))

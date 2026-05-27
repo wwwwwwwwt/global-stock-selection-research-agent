@@ -39,6 +39,7 @@ def compute_technical_factors(
             "start_timestamp": frame.iloc[0]["timestamp"],
             "end_timestamp": latest["timestamp"],
             "bar_count": int(len(frame)),
+            "latest_close": _float_or_none(latest.get("close")),
         }
         values.append(
             FactorValue(
@@ -146,6 +147,12 @@ def _mean(frame: pd.DataFrame, column: str, window: int) -> float | None:
     if column not in frame.columns or len(frame) < window:
         return None
     value = frame[column].tail(window).mean()
+    if pd.isna(value):
+        return None
+    return float(value)
+
+
+def _float_or_none(value) -> float | None:
     if pd.isna(value):
         return None
     return float(value)

@@ -51,6 +51,7 @@ def test_screening_cli_runs_pipeline(monkeypatch):
     monkeypatch.setattr(run_screening, "MySQLUniverseStorage", lambda config: object())
     monkeypatch.setattr(run_screening, "MySQLFactorStorage", lambda config: object())
     monkeypatch.setattr(run_screening, "MySQLScreeningStorage", lambda config: object())
+    monkeypatch.setattr(run_screening, "MySQLMarketRealityStorage", lambda config: object())
 
     result = CliRunner().invoke(
         run_screening.main,
@@ -62,5 +63,6 @@ def test_screening_cli_runs_pipeline(monkeypatch):
     assert calls["as_of"] == "2026-05-22"
     assert calls["interval"] == "1d"
     assert calls["strategy"].config["max_candidates"] == 1
+    assert calls["market_reality_storage"] is not None
     assert "selected_count=1" in result.output
     assert "1. EQUITY:US:MSFT score=0.820000" in result.output

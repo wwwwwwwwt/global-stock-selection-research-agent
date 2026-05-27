@@ -3,6 +3,7 @@ import click
 
 from openstockagent.database.mysql import MySQLConfig
 from openstockagent.factors.storage import MySQLFactorStorage
+from openstockagent.market.storage import MySQLMarketRealityStorage
 from openstockagent.screening.runner import ScreeningRunResult, run_screening_pipeline
 from openstockagent.screening.scoring import build_default_strategy
 from openstockagent.screening.storage import MySQLScreeningStorage
@@ -45,6 +46,7 @@ def main(
         universe_storage=MySQLUniverseStorage(config=config),
         factor_storage=MySQLFactorStorage(config=config),
         screening_storage=MySQLScreeningStorage(config=config),
+        market_reality_storage=MySQLMarketRealityStorage(config=config),
         strategy=strategy,
     )
     click.echo(

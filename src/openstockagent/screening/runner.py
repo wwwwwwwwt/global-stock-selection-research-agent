@@ -33,13 +33,15 @@ def run_screening_pipeline(
     strategy: ScreenStrategy | None = None,
     run_id: str | None = None,
     market_context_snapshot_id: str | None = None,
+    market_reality_storage=None,
 ) -> ScreeningRunResult:
     strategy = strategy or build_default_strategy()
     run_id = run_id or _stable_run_id(universe_id, as_of, interval, strategy)
 
     members = universe_storage.load_universe_members(universe_id, as_of=as_of)
     values = factor_storage.load_factor_values(as_of, interval)
-    results = rank_screen_candidates(run_id, members, values, strategy)
+    status_by_instrument = _load_statuses(members, as_of, market_reality_storage)
+    results = rank_screen_candidates(run_id, members, values, strategy, status_by_instrument=status_by_instrument)
 
     screening_storage.upsert_strategy(strategy)
     screening_storage.upsert_screen_run(
@@ -76,3 +78,14 @@ def _stable_run_id(universe_id: str, as_of: str, interval: str, strategy: Screen
     payload = "|".join([universe_id, as_of, interval, strategy.strategy_name, strategy.version])
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
     return f"screen-{digest}"
+
+
+def _load_statuses(members, as_of: str, market_reality_storage) -> dict:
+    if market_reality_storage is None:
+        return {}
+    statuses = {}
+    for member in members:
+        status = market_reality_storage.load_instrument_status(member.instrument_id, as_of)
+        if status is not None:
+            statuses[member.instrument_id] = status
+    return statuses

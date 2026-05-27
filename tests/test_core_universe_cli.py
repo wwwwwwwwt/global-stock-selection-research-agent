@@ -177,3 +177,67 @@ def test_stock_data_sync_cli_falls_back_to_akshare_for_cn_without_tushare_token(
 
     assert result.exit_code == 0
     assert calls["plan"].provider == "akshare"
+
+
+def test_stock_data_sync_cn_reference_cli_requires_tushare_token(monkeypatch):
+    from openstockagent.cli import stock_data
+
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+
+    result = CliRunner().invoke(
+        stock_data.main,
+        ["sync-cn-reference", "--start", "2026-05-01", "--end", "2026-05-28"],
+    )
+
+    assert result.exit_code != 0
+    assert "TUSHARE_TOKEN is required" in result.output
+
+
+def test_stock_data_sync_cn_reference_cli_runs_reference_pipeline(monkeypatch):
+    from openstockagent.cli import stock_data
+    from openstockagent.pipelines.tushare_reference import TushareReferenceSyncResult
+
+    calls = {}
+
+    class FakeReferenceFeed:
+        def __init__(self, token=None):
+            calls["token"] = token
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return TushareReferenceSyncResult(
+            market="CN",
+            start=kwargs["start"],
+            end=kwargs["end"],
+            status_date=kwargs["status_date"],
+            instruments_written=2,
+            aliases_written=2,
+            calendar_days_written=5,
+            statuses_written=3,
+            corporate_actions_written=2,
+        )
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "env-token")
+    monkeypatch.setattr(stock_data, "TushareReferenceFeed", FakeReferenceFeed)
+    monkeypatch.setattr(stock_data, "MySQLMarketDataStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLMarketRealityStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "run_tushare_reference_sync", fake_run)
+
+    result = CliRunner().invoke(
+        stock_data.main,
+        [
+            "sync-cn-reference",
+            "--start",
+            "2026-05-01",
+            "--end",
+            "2026-05-28",
+            "--status-date",
+            "2026-05-27",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["token"] == "env-token"
+    assert calls["status_date"] == "2026-05-27"
+    assert "instruments_written=2" in result.output
+    assert "statuses_written=3" in result.output
