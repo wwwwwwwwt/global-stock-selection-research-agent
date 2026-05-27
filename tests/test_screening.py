@@ -37,6 +37,9 @@ def test_rank_screen_candidates_applies_filters_and_scores_missing_optional_fact
     assert leader_breakdown["theory_score"]["score"] == 0.5
     assert leader_breakdown["market_context_score"]["score"] == 0.5
     assert leader_breakdown["kronos_score"]["score"] == 0.5
+    assert leader_breakdown["valuation_score"]["score"] == 0.5
+    assert leader_breakdown["liquidity_score"]["score"] > 0.5
+    assert leader_breakdown["size_score"]["score"] == 0.5
     assert results[0].total_score > results[1].total_score
 
     reasons = json.loads(results[0].reason_json)
@@ -45,6 +48,37 @@ def test_rank_screen_candidates_applies_filters_and_scores_missing_optional_fact
     assert reasons["top_components"][0]["component"] in {"momentum_score", "trend_score"}
     assert "volatility_score" in risks
     assert "return_20d" in {item["factor_name"] for item in evidence_refs["factors"]}
+
+
+def test_rank_screen_candidates_uses_daily_basic_factor_components():
+    from openstockagent.screening.scoring import build_default_strategy, rank_screen_candidates
+
+    members = [
+        UniverseMember("cn_sample", "EQUITY:CN:VALUE", "2024-01-01"),
+        UniverseMember("cn_sample", "EQUITY:CN:EXPENSIVE", "2024-01-01"),
+    ]
+    values = [
+        *_factor_set("EQUITY:CN:VALUE", momentum=0.60, trend=0.60, volume=0.60, volatility=0.60, turnover=2_000_000),
+        *_daily_basic_factor_set("EQUITY:CN:VALUE", valuation=0.95, liquidity=0.85, size=0.80),
+        *_factor_set(
+            "EQUITY:CN:EXPENSIVE",
+            momentum=0.60,
+            trend=0.60,
+            volume=0.60,
+            volatility=0.60,
+            turnover=2_000_000,
+        ),
+        *_daily_basic_factor_set("EQUITY:CN:EXPENSIVE", valuation=0.10, liquidity=0.20, size=0.30),
+    ]
+
+    results = rank_screen_candidates("screen-test", members, values, build_default_strategy(max_candidates=2))
+
+    assert [result.instrument_id for result in results] == ["EQUITY:CN:VALUE", "EQUITY:CN:EXPENSIVE"]
+    leader_breakdown = json.loads(results[0].score_breakdown_json)
+    assert leader_breakdown["valuation_score"]["score"] == 0.95
+    assert leader_breakdown["liquidity_score"]["score"] == 0.76666667
+    assert leader_breakdown["size_score"]["score"] == 0.8
+    assert results[0].total_score > results[1].total_score
 
 
 def test_rank_screen_candidates_filters_market_reality_statuses():
@@ -274,6 +308,35 @@ def _factor_set(
             percentile=volume,
             evidence_json=evidence,
         ),
+    ]
+
+
+def _daily_basic_factor_set(
+    instrument_id: str,
+    *,
+    valuation: float,
+    liquidity: float,
+    size: float,
+) -> list[FactorValue]:
+    evidence = json.dumps({"source": "tushare", "raw_endpoint": "daily_basic"}, sort_keys=True)
+    return [
+        FactorValue(instrument_id, "2026-05-22", "1d", "turnover_rate", 1.0, percentile=liquidity, evidence_json=evidence),
+        FactorValue(
+            instrument_id,
+            "2026-05-22",
+            "1d",
+            "turnover_rate_f",
+            1.2,
+            percentile=liquidity,
+            evidence_json=evidence,
+        ),
+        FactorValue(instrument_id, "2026-05-22", "1d", "volume_ratio", 1.0, percentile=liquidity, evidence_json=evidence),
+        FactorValue(instrument_id, "2026-05-22", "1d", "pe_ttm", 10.0, percentile=valuation, evidence_json=evidence),
+        FactorValue(instrument_id, "2026-05-22", "1d", "pb", 1.2, percentile=valuation, evidence_json=evidence),
+        FactorValue(instrument_id, "2026-05-22", "1d", "ps_ttm", 1.5, percentile=valuation, evidence_json=evidence),
+        FactorValue(instrument_id, "2026-05-22", "1d", "dv_ttm", 3.0, percentile=valuation, evidence_json=evidence),
+        FactorValue(instrument_id, "2026-05-22", "1d", "total_mv", 100000.0, percentile=size, evidence_json=evidence),
+        FactorValue(instrument_id, "2026-05-22", "1d", "circ_mv", 80000.0, percentile=size, evidence_json=evidence),
     ]
 
 
