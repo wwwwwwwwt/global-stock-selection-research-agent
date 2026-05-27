@@ -309,3 +309,81 @@ def test_stock_data_sync_cn_daily_cli_runs_batch_pipeline(monkeypatch):
     assert calls["include_daily_basic"] is True
     assert calls["max_symbols"] == 5
     assert "factor_values_written=45" in result.output
+
+
+def test_stock_data_run_cn_selection_cli_runs_end_to_end_pipeline(monkeypatch):
+    from openstockagent.cli import stock_data
+    from openstockagent.pipelines.cn_daily_selection import CNDailySelectionResult
+    from openstockagent.pipelines.tushare_daily_batch import TushareDailyBatchSyncResult
+    from openstockagent.pipelines.tushare_reference import TushareReferenceSyncResult
+    from openstockagent.recommendations.runner import RecommendationRunResult
+    from openstockagent.screening.runner import ScreeningRunResult
+
+    calls = {}
+
+    class FakeReferenceFeed:
+        def __init__(self, token=None):
+            calls["token"] = token
+
+    class FakePortfolioResult:
+        class Decision:
+            decision_id = "decision-test"
+            action = "allocate"
+            target_gross_exposure = 0.5
+            cash_pct = 0.5
+
+        decision = Decision()
+        allocations = [object()]
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return CNDailySelectionResult(
+            universe_id=kwargs["universe_id"],
+            trade_date=kwargs["trade_date"],
+            reference=TushareReferenceSyncResult("CN", "2026-05-20", "2026-05-27", "2026-05-27", 2, 2, 1, 2, 2),
+            daily=TushareDailyBatchSyncResult("cn_core", "2026-05-27", 5, 5506, 5506, 5, 45, 5),
+            screening=ScreeningRunResult("screen-test", "cn_core", "2026-05-27", "1d", 800, 45, 5, 5, 795, [], []),
+            recommendation=RecommendationRunResult(
+                "rec-test", "screen-test", "cn_core", "2026-05-27", "5d", "2026-06-03", "completed", 5, 3, 2, 0, []
+            ),
+            portfolio=FakePortfolioResult(),
+        )
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "env-token")
+    monkeypatch.setattr(stock_data, "TushareReferenceFeed", FakeReferenceFeed)
+    monkeypatch.setattr(stock_data, "MySQLUniverseStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLMarketDataStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLMarketRealityStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLFactorStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLScreeningStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLRecommendationStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLPortfolioStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "run_cn_daily_selection_pipeline", fake_run)
+
+    result = CliRunner().invoke(
+        stock_data.main,
+        [
+            "run-cn-selection",
+            "--universe",
+            "cn_core",
+            "--trade-date",
+            "2026-05-27",
+            "--reference-start",
+            "2026-05-20",
+            "--max-symbols",
+            "5",
+            "--top-n",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["token"] == "env-token"
+    assert calls["reference_start"] == "2026-05-20"
+    assert calls["max_symbols"] == 5
+    assert calls["top_n"] == 5
+    assert calls["run_reference"] is True
+    assert calls["run_daily_sync"] is True
+    assert calls["run_portfolio"] is True
+    assert "screen_run_id=screen-test" in result.output
+    assert "Portfolio: decision_id=decision-test" in result.output

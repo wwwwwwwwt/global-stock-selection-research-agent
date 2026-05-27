@@ -13,8 +13,12 @@ from openstockagent.data.sync_storage import MySQLDataSyncStorage
 from openstockagent.database.mysql import MySQLConfig
 from openstockagent.factors.storage import MySQLFactorStorage
 from openstockagent.market.storage import MySQLMarketRealityStorage
+from openstockagent.pipelines.cn_daily_selection import run_cn_daily_selection_pipeline
 from openstockagent.pipelines.tushare_daily_batch import run_tushare_daily_batch_sync
 from openstockagent.pipelines.tushare_reference import run_tushare_reference_sync
+from openstockagent.portfolio.storage import MySQLPortfolioStorage
+from openstockagent.recommendations.storage import MySQLRecommendationStorage
+from openstockagent.screening.storage import MySQLScreeningStorage
 from openstockagent.universe.storage import MySQLUniverseStorage
 
 
@@ -187,6 +191,122 @@ def sync_cn_daily(
         f"bars_written={result.bars_written} "
         f"factor_values_written={result.factor_values_written}"
     )
+
+
+@main.command("run-cn-selection")
+@click.option("--universe", "universe_id", default="cn_core", show_default=True, help="Universe id to screen")
+@click.option("--trade-date", required=True, help="A-share trade date, e.g. 2026-05-27")
+@click.option("--reference-start", default=None, help="Reference sync start date; defaults to trade date")
+@click.option("--horizon", type=click.Choice(["1d", "5d", "20d", "60d"]), default="5d", show_default=True)
+@click.option(
+    "--market-regime",
+    type=click.Choice(["risk_on", "neutral", "risk_off", "high_risk", "data_bad", "unknown"]),
+    default="neutral",
+    show_default=True,
+)
+@click.option("--top-n", default=10, show_default=True, help="Selected screen and recommendation count")
+@click.option("--max-symbols", type=int, default=None, help="Limit data sync members for smoke tests")
+@click.option("--min-turnover", default=0.0, show_default=True, help="Minimum 20-day average amount")
+@click.option("--min-bar-count", default=0, show_default=True, help="Minimum available bar count")
+@click.option("--skip-reference", is_flag=True, help="Skip Tushare reference/status sync")
+@click.option("--skip-daily-sync", is_flag=True, help="Skip Tushare daily/daily_basic sync")
+@click.option("--skip-portfolio", is_flag=True, help="Skip portfolio decision creation")
+@click.option("--account-id", default="paper-cn", show_default=True)
+@click.option("--capital", default=100000.0, show_default=True, type=float)
+@click.option("--base-currency", default="CNY", show_default=True)
+@click.option("--mysql-url", default="jdbc:mysql://127.0.0.1:13306/openstockagent", help="MySQL JDBC URL")
+@click.option("--mysql-user", default="root", help="MySQL username")
+@click.option("--mysql-password", default="123456", help="MySQL password")
+def run_cn_selection(
+    universe_id: str,
+    trade_date: str,
+    reference_start: str | None,
+    horizon: str,
+    market_regime: str,
+    top_n: int,
+    max_symbols: int | None,
+    min_turnover: float,
+    min_bar_count: int,
+    skip_reference: bool,
+    skip_daily_sync: bool,
+    skip_portfolio: bool,
+    account_id: str,
+    capital: float,
+    base_currency: str,
+    mysql_url: str,
+    mysql_user: str,
+    mysql_password: str,
+):
+    """Run the full CN daily data-to-portfolio stock-selection workflow."""
+    token = os.getenv(TUSHARE_TOKEN_ENV)
+    if not token and (not skip_reference or not skip_daily_sync):
+        raise click.ClickException(f"{TUSHARE_TOKEN_ENV} is required for Tushare CN selection runs")
+    config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
+    reference_feed = TushareReferenceFeed(token=token) if token else None
+    result = run_cn_daily_selection_pipeline(
+        universe_id=universe_id,
+        trade_date=trade_date,
+        reference_start=reference_start or trade_date,
+        reference_feed=reference_feed,
+        universe_storage=MySQLUniverseStorage(config=config),
+        market_data_storage=MySQLMarketDataStorage(config=config),
+        market_reality_storage=MySQLMarketRealityStorage(config=config),
+        factor_storage=MySQLFactorStorage(config=config),
+        screening_storage=MySQLScreeningStorage(config=config),
+        recommendation_storage=MySQLRecommendationStorage(config=config),
+        portfolio_storage=None if skip_portfolio else MySQLPortfolioStorage(config=config),
+        horizon=horizon,
+        market_regime=market_regime,
+        top_n=top_n,
+        min_turnover=min_turnover,
+        min_bar_count=min_bar_count,
+        max_symbols=max_symbols,
+        run_reference=not skip_reference,
+        run_daily_sync=not skip_daily_sync,
+        run_portfolio=not skip_portfolio,
+        account_id=account_id,
+        capital=capital,
+        base_currency=base_currency,
+    )
+    click.echo(
+        "CN daily selection complete: "
+        f"universe_id={result.universe_id} "
+        f"trade_date={result.trade_date} "
+        f"screen_run_id={result.screening.run_id} "
+        f"recommendation_run_id={result.recommendation.run_id} "
+        f"ranked_count={result.screening.ranked_count} "
+        f"selected_count={result.screening.selected_count} "
+        f"buy_candidate_count={result.recommendation.buy_candidate_count}"
+    )
+    if result.reference is not None:
+        click.echo(
+            "Reference: "
+            f"instruments_written={result.reference.instruments_written} "
+            f"calendar_days_written={result.reference.calendar_days_written} "
+            f"statuses_written={result.reference.statuses_written}"
+        )
+    if result.daily is not None:
+        click.echo(
+            "Daily data: "
+            f"daily_rows_seen={result.daily.daily_rows_seen} "
+            f"daily_basic_rows_seen={result.daily.daily_basic_rows_seen} "
+            f"bars_written={result.daily.bars_written} "
+            f"factor_values_written={result.daily.factor_values_written}"
+        )
+    selected = [screen_result for screen_result in result.screening.results if screen_result.selected]
+    if selected:
+        click.echo("Selected candidates:")
+        for screen_result in selected:
+            click.echo(f"{screen_result.rank}. {screen_result.instrument_id} score={screen_result.total_score:.6f}")
+    if result.portfolio is not None:
+        click.echo(
+            "Portfolio: "
+            f"decision_id={result.portfolio.decision.decision_id} "
+            f"action={result.portfolio.decision.action} "
+            f"target_gross_exposure={result.portfolio.decision.target_gross_exposure:.6f} "
+            f"cash_pct={result.portfolio.decision.cash_pct:.6f} "
+            f"allocations={len(result.portfolio.allocations)}"
+        )
 
 
 def _cn_feed_from_env():
