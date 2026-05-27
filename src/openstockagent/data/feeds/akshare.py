@@ -1,6 +1,12 @@
 """AKShare feed for China A-share daily bars."""
 from __future__ import annotations
 
+import urllib.request
+
+# Bypass system proxy settings that may interfere with direct connections
+# to domestic Chinese data sources (e.g., East Money API).
+urllib.request.getproxies = lambda: {}
+
 import pandas as pd
 
 from .base import BaseMarketDataFeed

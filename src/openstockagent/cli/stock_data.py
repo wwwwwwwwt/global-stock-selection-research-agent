@@ -1,9 +1,12 @@
 """Market data synchronization commands."""
+import os
+
 import click
 
 from openstockagent.data.feeds.akshare import AkShareAStockFeed
 from openstockagent.data.feeds.polygon import PolygonStockFeed
 from openstockagent.data.feeds.registry import FeedRegistry
+from openstockagent.data.feeds.tushare import TUSHARE_TOKEN_ENV, TushareAStockFeed
 from openstockagent.data.storage import MySQLMarketDataStorage
 from openstockagent.data.sync import build_sync_plan, run_data_sync_plan
 from openstockagent.data.sync_storage import MySQLDataSyncStorage
@@ -48,15 +51,17 @@ def sync(
     config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
     feed_registry = FeedRegistry()
     if market == "US":
-        feed_registry.register("US", "equity", interval, PolygonStockFeed())
+        feed = PolygonStockFeed()
+        feed_registry.register("US", "equity", interval, feed)
     else:
-        feed_registry.register("CN", "equity", interval, AkShareAStockFeed())
+        feed = _cn_feed_from_env()
+        feed_registry.register("CN", "equity", interval, feed)
     plan = build_sync_plan(
         universe_id=universe_id,
         market=market,
         mode=mode,
         interval=interval,
-        provider="polygon" if market == "US" else "akshare",
+        provider=feed.source,
         lookback_years=lookback_years,
         incremental_days=incremental_days,
     )
@@ -89,6 +94,13 @@ def sync(
         click.echo("Errors:")
         for error in result.errors:
             click.echo(f"- {error}")
+
+
+def _cn_feed_from_env():
+    token = os.getenv(TUSHARE_TOKEN_ENV)
+    if token:
+        return TushareAStockFeed(token=token)
+    return AkShareAStockFeed()
 
 
 if __name__ == "__main__":

@@ -61,6 +61,44 @@ def test_upsert_and_load_time_aware_universe_members():
     assert loaded == members
 
 
+def test_load_universe_members_returns_latest_active_member_per_instrument():
+    factory = FakeConnectionFactory(
+        rows=[
+            {
+                "universe_id": "cn_core",
+                "instrument_id": "EQUITY:CN:600519",
+                "start_date": "2026-05-25",
+                "end_date": None,
+                "reason": "old build",
+            },
+            {
+                "universe_id": "cn_core",
+                "instrument_id": "EQUITY:CN:600519",
+                "start_date": "2026-05-28",
+                "end_date": None,
+                "reason": "new build",
+            },
+            {
+                "universe_id": "cn_core",
+                "instrument_id": "EQUITY:CN:000001",
+                "start_date": "2026-05-25",
+                "end_date": None,
+                "reason": "bank",
+            },
+        ]
+    )
+    storage = MySQLUniverseStorage(
+        config=MySQLConfig.from_jdbc_url("jdbc:mysql://127.0.0.1:13306/", "root", "123456"),
+        connection_factory=factory,
+    )
+
+    loaded = storage.load_universe_members("cn_core", as_of="2026-05-28")
+
+    assert [member.instrument_id for member in loaded] == ["EQUITY:CN:000001", "EQUITY:CN:600519"]
+    assert loaded[1].start_date == "2026-05-28"
+    assert loaded[1].reason == "new build"
+
+
 def test_load_universe_csv_fixture():
     universe, members = load_universe_csv(
         Path("tests/fixtures/cn_sample_universe.csv"),

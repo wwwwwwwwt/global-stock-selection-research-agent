@@ -13,6 +13,10 @@ def to_source_symbol(instrument_id: str, source: str) -> str:
         if market == "CN":
             return symbol
         raise ValueError(f"Unsupported market for AKShare symbol mapping: {market}")
+    if source == "tushare":
+        if market == "CN":
+            return f"{symbol}.{_tushare_suffix(symbol)}"
+        raise ValueError(f"Unsupported market for Tushare symbol mapping: {market}")
     if source != "yahoo":
         raise ValueError(f"Unsupported source for symbol mapping: {source}")
     if market == "US":
@@ -38,9 +42,9 @@ def infer_instrument(source_symbol: str, source: str) -> tuple[Instrument, Instr
             name=None,
             timezone="Asia/Hong_Kong",
         )
-    elif source_symbol.endswith(".SH") or source_symbol.endswith(".SZ"):
+    elif source_symbol.endswith(".SH") or source_symbol.endswith(".SZ") or source_symbol.endswith(".BJ"):
         raw, suffix = source_symbol.split(".")
-        exchange = "SSE" if suffix == "SH" else "SZSE"
+        exchange = {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}[suffix]
         instrument = Instrument(
             instrument_id=f"EQUITY:CN:{raw}",
             symbol=raw,
@@ -64,3 +68,11 @@ def infer_instrument(source_symbol: str, source: str) -> tuple[Instrument, Instr
             timezone="America/New_York",
         )
     return instrument, InstrumentAlias(instrument.instrument_id, source, source_symbol)
+
+
+def _tushare_suffix(symbol: str) -> str:
+    if symbol.startswith("6"):
+        return "SH"
+    if symbol.startswith(("4", "8", "9")):
+        return "BJ"
+    return "SZ"

@@ -9,9 +9,45 @@ from openstockagent.universe.models import UniverseMember
 def test_to_source_symbol_maps_instrument_ids_to_source_symbols():
     assert to_source_symbol("EQUITY:US:AAPL", source="yahoo") == "AAPL"
     assert to_source_symbol("EQUITY:US:AAPL", source="polygon") == "AAPL"
+    assert to_source_symbol("EQUITY:CN:600519", source="tushare") == "600519.SH"
+    assert to_source_symbol("EQUITY:CN:000001", source="tushare") == "000001.SZ"
+    assert to_source_symbol("EQUITY:CN:830799", source="tushare") == "830799.BJ"
     assert to_source_symbol("EQUITY:CN:600519", source="akshare") == "600519"
     assert to_source_symbol("EQUITY:CN:000001", source="akshare") == "000001"
     assert to_source_symbol("EQUITY:HK:09988", source="yahoo") == "9988.HK"
+
+
+def test_real_data_factor_pipeline_limits_symbols_for_smoke_runs():
+    from openstockagent.data.feeds.registry import FeedRegistry
+    from openstockagent.pipelines.real_data_factors import run_real_data_factor_pipeline
+
+    universe_storage = FakeUniverseStorage(
+        [
+            UniverseMember("cn_sample", "EQUITY:CN:600519", "2024-01-01"),
+            UniverseMember("cn_sample", "EQUITY:CN:000001", "2024-01-01"),
+            UniverseMember("cn_sample", "EQUITY:CN:000002", "2024-01-01"),
+        ]
+    )
+    feed_registry = FeedRegistry()
+    feed = FakeFeed("akshare")
+    feed_registry.register("CN", "equity", "1d", feed)
+    bar_storage = FakeBarStorage()
+    factor_storage = FakeFactorStorage()
+
+    result = run_real_data_factor_pipeline(
+        universe_id="cn_sample",
+        as_of="2024-04-05",
+        interval="1d",
+        period="6mo",
+        universe_storage=universe_storage,
+        bar_storage=bar_storage,
+        factor_storage=factor_storage,
+        feed_registry=feed_registry,
+        max_symbols=2,
+    )
+
+    assert result.members_seen == 2
+    assert feed.calls == [("600519", "1d", "6mo"), ("000001", "1d", "6mo")]
 
 
 def test_real_data_factor_pipeline_routes_market_feeds_and_writes_factor_values():

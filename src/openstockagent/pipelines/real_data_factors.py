@@ -35,8 +35,11 @@ def run_real_data_factor_pipeline(
     feed=None,
     feed_registry=None,
     adjustment: str = "split_adjusted",
+    max_symbols: int | None = None,
 ) -> RealDataFactorRunResult:
     members = universe_storage.load_universe_members(universe_id, as_of=as_of)
+    if max_symbols is not None:
+        members = members[:max_symbols]
     bars_by_instrument = {}
     bars_written = 0
     errors = []

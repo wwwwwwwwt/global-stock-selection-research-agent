@@ -125,7 +125,10 @@ class MySQLUniverseStorage:
                 rows = cursor.fetchall()
         finally:
             connection.close()
-        return [_member_from_row(row) for row in rows]
+        members = [_member_from_row(row) for row in rows]
+        if as_of is not None:
+            return _latest_members_by_instrument(members)
+        return members
 
 
 def _connect(config: MySQLConfig):
@@ -153,3 +156,12 @@ def _member_from_row(row) -> UniverseMember:
         end_date=str(values["end_date"]) if values["end_date"] is not None else None,
         reason=values["reason"],
     )
+
+
+def _latest_members_by_instrument(members: list[UniverseMember]) -> list[UniverseMember]:
+    latest = {}
+    for member in members:
+        current = latest.get(member.instrument_id)
+        if current is None or member.start_date > current.start_date:
+            latest[member.instrument_id] = member
+    return [latest[instrument_id] for instrument_id in sorted(latest)]

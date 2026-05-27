@@ -58,6 +58,9 @@ def _prepare_bars(bars: pd.DataFrame, trade_date: str) -> pd.DataFrame:
     frame = bars.copy()
     if "local_date" not in frame.columns:
         frame["local_date"] = pd.to_datetime(frame["timestamp"], utc=True).dt.strftime("%Y-%m-%d")
+    else:
+        # Ensure local_date is string for consistent comparison
+        frame["local_date"] = pd.to_datetime(frame["local_date"], utc=True).dt.strftime("%Y-%m-%d")
     frame = frame[frame["local_date"] <= trade_date].copy()
     if frame.empty:
         return frame
