@@ -241,3 +241,71 @@ def test_stock_data_sync_cn_reference_cli_runs_reference_pipeline(monkeypatch):
     assert calls["status_date"] == "2026-05-27"
     assert "instruments_written=2" in result.output
     assert "statuses_written=3" in result.output
+
+
+def test_stock_data_sync_cn_daily_cli_requires_tushare_token(monkeypatch):
+    from openstockagent.cli import stock_data
+
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+
+    result = CliRunner().invoke(
+        stock_data.main,
+        ["sync-cn-daily", "--universe", "cn_core", "--trade-date", "2026-05-27"],
+    )
+
+    assert result.exit_code != 0
+    assert "TUSHARE_TOKEN is required" in result.output
+
+
+def test_stock_data_sync_cn_daily_cli_runs_batch_pipeline(monkeypatch):
+    from openstockagent.cli import stock_data
+    from openstockagent.pipelines.tushare_daily_batch import TushareDailyBatchSyncResult
+
+    calls = {}
+
+    class FakeReferenceFeed:
+        def __init__(self, token=None):
+            calls["token"] = token
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return TushareDailyBatchSyncResult(
+            universe_id=kwargs["universe_id"],
+            trade_date=kwargs["trade_date"],
+            members_seen=5,
+            daily_rows_seen=5000,
+            daily_basic_rows_seen=5000,
+            bars_written=5,
+            factor_values_written=45,
+            instruments_matched=5,
+        )
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "env-token")
+    monkeypatch.setattr(stock_data, "TushareReferenceFeed", FakeReferenceFeed)
+    monkeypatch.setattr(stock_data, "MySQLUniverseStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLMarketDataStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLFactorStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "run_tushare_daily_batch_sync", fake_run)
+
+    result = CliRunner().invoke(
+        stock_data.main,
+        [
+            "sync-cn-daily",
+            "--universe",
+            "cn_core",
+            "--trade-date",
+            "2026-05-27",
+            "--max-symbols",
+            "5",
+            "--skip-bars",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["token"] == "env-token"
+    assert calls["universe_id"] == "cn_core"
+    assert calls["trade_date"] == "2026-05-27"
+    assert calls["include_bars"] is False
+    assert calls["include_daily_basic"] is True
+    assert calls["max_symbols"] == 5
+    assert "factor_values_written=45" in result.output

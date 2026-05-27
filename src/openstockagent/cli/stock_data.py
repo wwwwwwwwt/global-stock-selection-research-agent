@@ -11,7 +11,9 @@ from openstockagent.data.storage import MySQLMarketDataStorage
 from openstockagent.data.sync import build_sync_plan, run_data_sync_plan
 from openstockagent.data.sync_storage import MySQLDataSyncStorage
 from openstockagent.database.mysql import MySQLConfig
+from openstockagent.factors.storage import MySQLFactorStorage
 from openstockagent.market.storage import MySQLMarketRealityStorage
+from openstockagent.pipelines.tushare_daily_batch import run_tushare_daily_batch_sync
 from openstockagent.pipelines.tushare_reference import run_tushare_reference_sync
 from openstockagent.universe.storage import MySQLUniverseStorage
 
@@ -136,6 +138,54 @@ def sync_cn_reference(
         f"calendar_days_written={result.calendar_days_written} "
         f"statuses_written={result.statuses_written} "
         f"corporate_actions_written={result.corporate_actions_written}"
+    )
+
+
+@main.command("sync-cn-daily")
+@click.option("--universe", "universe_id", required=True, help="Universe id to filter full-market Tushare rows")
+@click.option("--trade-date", required=True, help="A-share trade date, e.g. 2026-05-27")
+@click.option("--max-symbols", type=int, default=None, help="Limit universe members for smoke tests")
+@click.option("--skip-bars", is_flag=True, help="Skip daily OHLCV bar ingestion")
+@click.option("--skip-daily-basic", is_flag=True, help="Skip daily_basic factor ingestion")
+@click.option("--mysql-url", default="jdbc:mysql://127.0.0.1:13306/openstockagent", help="MySQL JDBC URL")
+@click.option("--mysql-user", default="root", help="MySQL username")
+@click.option("--mysql-password", default="123456", help="MySQL password")
+def sync_cn_daily(
+    universe_id: str,
+    trade_date: str,
+    max_symbols: int | None,
+    skip_bars: bool,
+    skip_daily_basic: bool,
+    mysql_url: str,
+    mysql_user: str,
+    mysql_password: str,
+):
+    """Synchronize Tushare A-share trade-date batch bars and daily_basic factors."""
+    token = os.getenv(TUSHARE_TOKEN_ENV)
+    if not token:
+        raise click.ClickException(f"{TUSHARE_TOKEN_ENV} is required for Tushare daily batch sync")
+    config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
+    result = run_tushare_daily_batch_sync(
+        universe_id=universe_id,
+        trade_date=trade_date,
+        reference_feed=TushareReferenceFeed(token=token),
+        universe_storage=MySQLUniverseStorage(config=config),
+        bar_storage=MySQLMarketDataStorage(config=config),
+        factor_storage=MySQLFactorStorage(config=config),
+        include_bars=not skip_bars,
+        include_daily_basic=not skip_daily_basic,
+        max_symbols=max_symbols,
+    )
+    click.echo(
+        "Tushare daily batch sync complete: "
+        f"universe_id={result.universe_id} "
+        f"trade_date={result.trade_date} "
+        f"members_seen={result.members_seen} "
+        f"instruments_matched={result.instruments_matched} "
+        f"daily_rows_seen={result.daily_rows_seen} "
+        f"daily_basic_rows_seen={result.daily_basic_rows_seen} "
+        f"bars_written={result.bars_written} "
+        f"factor_values_written={result.factor_values_written}"
     )
 
 

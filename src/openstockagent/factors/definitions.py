@@ -16,4 +16,18 @@ DEFAULT_FACTOR_DEFINITIONS = [
     FactorDefinition("turnover_amount_20d", "liquidity", "higher_better", "Twenty-day average traded amount."),
 ]
 
-FACTOR_DEFINITIONS_BY_NAME = {definition.factor_name: definition for definition in DEFAULT_FACTOR_DEFINITIONS}
+DAILY_BASIC_FACTOR_DEFINITIONS = [
+    FactorDefinition("turnover_rate", "liquidity", "higher_better", "Daily turnover rate."),
+    FactorDefinition("turnover_rate_f", "liquidity", "higher_better", "Daily free-float turnover rate."),
+    FactorDefinition("volume_ratio", "volume", "higher_better", "Daily volume ratio."),
+    FactorDefinition("pe_ttm", "valuation", "lower_better", "Trailing twelve-month price-to-earnings ratio."),
+    FactorDefinition("pb", "valuation", "lower_better", "Price-to-book ratio."),
+    FactorDefinition("ps_ttm", "valuation", "lower_better", "Trailing twelve-month price-to-sales ratio."),
+    FactorDefinition("dv_ttm", "yield", "higher_better", "Trailing twelve-month dividend yield."),
+    FactorDefinition("total_mv", "size", "higher_better", "Total market capitalization."),
+    FactorDefinition("circ_mv", "size", "higher_better", "Circulating market capitalization."),
+]
+
+ALL_FACTOR_DEFINITIONS = [*DEFAULT_FACTOR_DEFINITIONS, *DAILY_BASIC_FACTOR_DEFINITIONS]
+
+FACTOR_DEFINITIONS_BY_NAME = {definition.factor_name: definition for definition in ALL_FACTOR_DEFINITIONS}

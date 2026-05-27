@@ -228,6 +228,27 @@ class TushareReferenceFeed:
             ),
         )
 
+    def fetch_daily(
+        self,
+        *,
+        ts_code: str | None = None,
+        trade_date: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> pd.DataFrame:
+        return self.client.query(
+            "daily",
+            fields=DAILY_FIELDS,
+            **_drop_none(
+                {
+                    "ts_code": ts_code,
+                    "trade_date": _compact_date(trade_date) if trade_date else None,
+                    "start_date": _compact_date(start) if start else None,
+                    "end_date": _compact_date(end) if end else None,
+                }
+            ),
+        )
+
     def fetch_stock_st(
         self,
         *,
@@ -324,6 +345,7 @@ def _normalize_daily_bars(frame: pd.DataFrame, source_symbol: str) -> pd.DataFra
     normalized["timestamp"] = pd.to_datetime(normalized["timestamp"], format="%Y%m%d", utc=True).dt.strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
+    normalized["amount"] = pd.to_numeric(normalized["amount"], errors="coerce") * 1000
     normalized = normalized.sort_values("timestamp").reset_index(drop=True)
     return normalized
 

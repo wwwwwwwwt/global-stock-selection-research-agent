@@ -24,6 +24,7 @@ def test_tushare_feed_uses_pro_bar_for_adjusted_daily_bars_and_normalizes_column
     assert list(bars["timestamp"]) == ["2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z"]
     assert list(bars["close"]) == [101.5, 102.5]
     assert list(bars["volume"]) == [1000.0, 1200.0]
+    assert list(bars["amount"]) == [101000000.0, 122400000.0]
 
 
 def test_tushare_feed_uses_daily_for_unadjusted_bars_and_derives_period_dates():
@@ -107,6 +108,7 @@ def test_tushare_reference_feed_wraps_core_reference_endpoints_with_compact_date
 
     feed.fetch_trade_calendar(start="2024-01-01", end="2024-01-31")
     feed.fetch_daily_basic(trade_date="2024-01-02")
+    feed.fetch_daily(trade_date="2024-01-02")
     feed.fetch_stock_st(trade_date="2024-01-02")
     feed.fetch_suspend(trade_date="2024-01-02", suspend_type="S")
     feed.fetch_stk_limit(trade_date="2024-01-02")
@@ -114,13 +116,14 @@ def test_tushare_reference_feed_wraps_core_reference_endpoints_with_compact_date
     assert [call["api_name"] for call in client.query_calls] == [
         "trade_cal",
         "daily_basic",
+        "daily",
         "stock_st",
         "suspend_d",
         "stk_limit",
     ]
     assert client.query_calls[0]["params"] == {"exchange": "SSE", "start_date": "20240101", "end_date": "20240131"}
     assert client.query_calls[1]["params"] == {"trade_date": "20240102"}
-    assert client.query_calls[3]["params"] == {"trade_date": "20240102", "suspend_type": "S"}
+    assert client.query_calls[4]["params"] == {"trade_date": "20240102", "suspend_type": "S"}
 
 
 class FakeTushareClient:
