@@ -94,3 +94,54 @@ def test_real_data_factor_cli_uses_cn_feed_without_requiring_polygon(monkeypatch
     assert calls["tushare_token"] == "env-token"
     assert calls["max_symbols"] == 5
     assert "factor_values_written=45" in result.output
+
+
+def test_real_data_factor_cli_can_compute_from_stored_bars_without_market_feed(monkeypatch):
+    from openstockagent.cli import run_real_data_factors
+
+    calls = {}
+
+    def fail_feed():
+        raise AssertionError("Market feed should not be constructed for stored-bar factor runs")
+
+    def fake_stored_pipeline(**kwargs):
+        calls.update(kwargs)
+        return run_real_data_factors.StoredBarFactorRunResult(
+            universe_id=kwargs["universe_id"],
+            trade_date=kwargs["as_of"],
+            interval=kwargs["interval"],
+            members_seen=5,
+            instruments_loaded=5,
+            missing_instruments=0,
+            factor_values_written=45,
+            errors=[],
+        )
+
+    monkeypatch.setattr(run_real_data_factors, "PolygonStockFeed", fail_feed)
+    monkeypatch.setattr(run_real_data_factors, "AkShareAStockFeed", fail_feed)
+    monkeypatch.setattr(run_real_data_factors, "TushareAStockFeed", fail_feed)
+    monkeypatch.setattr(run_real_data_factors, "run_stored_bar_factor_pipeline", fake_stored_pipeline)
+    monkeypatch.setattr(run_real_data_factors, "MySQLUniverseStorage", lambda config: object())
+    monkeypatch.setattr(run_real_data_factors, "MySQLFactorStorage", lambda config: object())
+    monkeypatch.setattr(run_real_data_factors, "MySQLMarketDataStorage", lambda config: object())
+
+    result = CliRunner().invoke(
+        run_real_data_factors.main,
+        [
+            "cn_core",
+            "--as-of",
+            "2026-05-27",
+            "--from-stored-bars",
+            "--lookback-days",
+            "1825",
+            "--max-symbols",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["universe_id"] == "cn_core"
+    assert calls["lookback_days"] == 1825
+    assert calls["max_symbols"] == 5
+    assert "Stored bar factor run complete" in result.output
+    assert "instruments_loaded=5" in result.output

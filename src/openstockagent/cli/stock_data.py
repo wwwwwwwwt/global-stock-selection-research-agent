@@ -210,6 +210,8 @@ def sync_cn_daily(
 @click.option("--min-bar-count", default=0, show_default=True, help="Minimum available bar count")
 @click.option("--skip-reference", is_flag=True, help="Skip Tushare reference/status sync")
 @click.option("--skip-daily-sync", is_flag=True, help="Skip Tushare daily/daily_basic sync")
+@click.option("--skip-technical-factors", is_flag=True, help="Skip technical factor calculation from stored bars")
+@click.option("--technical-lookback-days", default=365, show_default=True, help="Stored bar lookback for technical factors")
 @click.option("--skip-portfolio", is_flag=True, help="Skip portfolio decision creation")
 @click.option("--allow-watch-allocation", is_flag=True, help="Allow watch recommendations to receive target allocations")
 @click.option("--account-id", default="paper-cn", show_default=True)
@@ -230,6 +232,8 @@ def run_cn_selection(
     min_bar_count: int,
     skip_reference: bool,
     skip_daily_sync: bool,
+    skip_technical_factors: bool,
+    technical_lookback_days: int,
     skip_portfolio: bool,
     allow_watch_allocation: bool,
     account_id: str,
@@ -265,6 +269,8 @@ def run_cn_selection(
         max_symbols=max_symbols,
         run_reference=not skip_reference,
         run_daily_sync=not skip_daily_sync,
+        run_technical_factors=not skip_technical_factors,
+        technical_lookback_days=technical_lookback_days,
         run_portfolio=not skip_portfolio,
         account_id=account_id,
         capital=capital,
@@ -295,6 +301,13 @@ def run_cn_selection(
             f"daily_basic_rows_seen={result.daily.daily_basic_rows_seen} "
             f"bars_written={result.daily.bars_written} "
             f"factor_values_written={result.daily.factor_values_written}"
+        )
+    if result.technical is not None:
+        click.echo(
+            "Technical factors: "
+            f"instruments_loaded={result.technical.instruments_loaded} "
+            f"missing_instruments={result.technical.missing_instruments} "
+            f"factor_values_written={result.technical.factor_values_written}"
         )
     if result.market_context is not None:
         click.echo(

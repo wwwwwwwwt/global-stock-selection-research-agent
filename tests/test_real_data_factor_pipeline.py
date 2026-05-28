@@ -2,7 +2,7 @@ import pandas as pd
 
 from openstockagent.data.symbols import to_source_symbol
 from openstockagent.data.feeds.registry import FeedRegistry
-from openstockagent.pipelines.real_data_factors import run_real_data_factor_pipeline
+from openstockagent.pipelines.real_data_factors import run_real_data_factor_pipeline, run_stored_bar_factor_pipeline
 from openstockagent.universe.models import UniverseMember
 
 
@@ -120,6 +120,41 @@ def test_real_data_factor_pipeline_records_symbol_failures_without_aborting():
     assert result.factor_values_written == 9
 
 
+def test_stored_bar_factor_pipeline_loads_canonical_bars_and_writes_technical_factors():
+    bar_storage = FakeBarStorage()
+    bar_storage.upsert_bars(_stored_bars("EQUITY:CN:600519", close_offset=0.0))
+    bar_storage.upsert_bars(_stored_bars("EQUITY:CN:000001", close_offset=10.0))
+    universe_storage = FakeUniverseStorage(
+        [
+            UniverseMember("cn_sample", "EQUITY:CN:600519", "2024-01-01"),
+            UniverseMember("cn_sample", "EQUITY:CN:000001", "2024-01-01"),
+        ]
+    )
+    factor_storage = FakeFactorStorage()
+
+    result = run_stored_bar_factor_pipeline(
+        universe_id="cn_sample",
+        as_of="2024-04-05",
+        interval="1d",
+        lookback_days=120,
+        universe_storage=universe_storage,
+        bar_storage=bar_storage,
+        factor_storage=factor_storage,
+    )
+
+    assert result.members_seen == 2
+    assert result.instruments_loaded == 2
+    assert result.missing_instruments == 0
+    assert result.factor_values_written == 18
+    assert len(factor_storage.definitions) == 9
+    assert {value.factor_name for value in factor_storage.values} >= {"return_60d", "ma_trend_score", "atr_14d"}
+    assert all(value.percentile is not None for value in factor_storage.values)
+    assert bar_storage.load_calls == [
+        ("EQUITY:CN:600519", "1d", "2023-12-07T00:00:00Z", "2024-04-05T23:59:59Z"),
+        ("EQUITY:CN:000001", "1d", "2023-12-07T00:00:00Z", "2024-04-05T23:59:59Z"),
+    ]
+
+
 class FakeUniverseStorage:
     def __init__(self, members):
         self.members = members
@@ -147,12 +182,14 @@ class FakeFactorStorage:
 class FakeBarStorage:
     def __init__(self):
         self.frames = []
+        self.load_calls = []
 
     def upsert_bars(self, bars):
         self.frames.append(bars.copy())
         return len(bars)
 
     def load_bars(self, instrument_id, interval, start, end):
+        self.load_calls.append((instrument_id, interval, start, end))
         for frame in self.frames:
             if frame.iloc[0]["instrument_id"] == instrument_id and frame.iloc[0]["interval"] == interval:
                 return frame[
@@ -197,3 +234,19 @@ def _sample_feed_bars(periods: int) -> pd.DataFrame:
             "amount": close * volume,
         }
     )
+
+
+def _stored_bars(instrument_id: str, close_offset: float) -> pd.DataFrame:
+    frame = _sample_feed_bars(periods=70)
+    frame["instrument_id"] = instrument_id
+    frame["local_date"] = pd.to_datetime(frame["timestamp"], utc=True).dt.date
+    frame["interval"] = "1d"
+    frame["source"] = "tushare"
+    frame["adjustment"] = "raw"
+    frame["currency"] = "CNY"
+    frame["is_complete"] = True
+    frame["close"] = frame["close"] + close_offset
+    frame["open"] = frame["open"] + close_offset
+    frame["high"] = frame["high"] + close_offset
+    frame["low"] = frame["low"] + close_offset
+    return frame

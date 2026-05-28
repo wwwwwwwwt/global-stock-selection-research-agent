@@ -24,6 +24,18 @@ class RealDataFactorRunResult:
     errors: list[str]
 
 
+@dataclass(frozen=True)
+class StoredBarFactorRunResult:
+    universe_id: str
+    trade_date: str
+    interval: str
+    members_seen: int
+    instruments_loaded: int
+    missing_instruments: int
+    factor_values_written: int
+    errors: list[str]
+
+
 def run_real_data_factor_pipeline(
     universe_id: str,
     as_of: str,
@@ -90,8 +102,69 @@ def run_real_data_factor_pipeline(
     )
 
 
+def run_stored_bar_factor_pipeline(
+    universe_id: str,
+    as_of: str,
+    interval: str,
+    lookback_days: int,
+    universe_storage,
+    bar_storage,
+    factor_storage,
+    max_symbols: int | None = None,
+) -> StoredBarFactorRunResult:
+    if lookback_days <= 0:
+        raise ValueError("lookback_days must be positive")
+    members = universe_storage.load_universe_members(universe_id, as_of=as_of)
+    if max_symbols is not None:
+        members = members[:max_symbols]
+    start, end = _bar_load_range(as_of, lookback_days)
+    bars_by_instrument = {}
+    errors = []
+
+    for member in members:
+        try:
+            bars = bar_storage.load_bars(member.instrument_id, interval, start, end)
+        except Exception as exc:
+            errors.append(f"{member.instrument_id}: {exc}")
+            continue
+        if bars.empty:
+            continue
+        bars_by_instrument[member.instrument_id] = _bars_up_to_as_of(bars, as_of)
+
+    values = compute_universe_factors(
+        members,
+        bars_by_instrument,
+        trade_date=as_of,
+        interval=interval,
+    )
+    factor_storage.upsert_factor_definitions(DEFAULT_FACTOR_DEFINITIONS)
+    factor_values_written = factor_storage.upsert_factor_values(values)
+    return StoredBarFactorRunResult(
+        universe_id=universe_id,
+        trade_date=as_of,
+        interval=interval,
+        members_seen=len(members),
+        instruments_loaded=len(bars_by_instrument),
+        missing_instruments=max(0, len(members) - len(bars_by_instrument) - len(errors)),
+        factor_values_written=factor_values_written,
+        errors=errors,
+    )
+
+
 def _bars_up_to_as_of(bars: pd.DataFrame, as_of: str) -> pd.DataFrame:
-    return bars[bars["local_date"] <= as_of].copy()
+    frame = bars.copy()
+    if "local_date" not in frame.columns:
+        frame["local_date"] = pd.to_datetime(frame["timestamp"], utc=True).dt.strftime("%Y-%m-%d")
+    else:
+        frame["local_date"] = pd.to_datetime(frame["local_date"]).dt.strftime("%Y-%m-%d")
+    return frame[frame["local_date"] <= as_of].copy()
+
+
+def _bar_load_range(as_of: str, lookback_days: int) -> tuple[str, str]:
+    as_of_date = pd.Timestamp(as_of)
+    start = (as_of_date - pd.DateOffset(days=lookback_days)).strftime("%Y-%m-%dT00:00:00Z")
+    end = as_of_date.strftime("%Y-%m-%dT23:59:59Z")
+    return start, end
 
 
 def _resolve_feed(instrument_id: str, interval: str, feed, feed_registry):

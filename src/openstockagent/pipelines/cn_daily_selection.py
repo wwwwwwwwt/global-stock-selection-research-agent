@@ -8,6 +8,7 @@ from openstockagent.market.regime import build_market_context_snapshot
 from openstockagent.portfolio.decision import PortfolioDecisionResult, build_default_policy, build_portfolio_decision
 from openstockagent.portfolio.models import PortfolioAccount
 from openstockagent.recommendations.runner import RecommendationRunResult, run_recommendation_pipeline
+from openstockagent.pipelines.real_data_factors import StoredBarFactorRunResult, run_stored_bar_factor_pipeline
 from openstockagent.screening.runner import ScreeningRunResult, run_screening_pipeline
 from openstockagent.screening.scoring import build_default_strategy
 
@@ -23,6 +24,7 @@ class CNDailySelectionResult:
     daily: TushareDailyBatchSyncResult | None
     screening: ScreeningRunResult
     recommendation: RecommendationRunResult
+    technical: StoredBarFactorRunResult | None = None
     market_context: MarketContextSnapshot | None = None
     portfolio: PortfolioDecisionResult | None = None
     messages: list[str] = field(default_factory=list)
@@ -49,6 +51,8 @@ def run_cn_daily_selection_pipeline(
     max_symbols: int | None = None,
     run_reference: bool = True,
     run_daily_sync: bool = True,
+    run_technical_factors: bool = True,
+    technical_lookback_days: int = 365,
     run_portfolio: bool = True,
     account_id: str = "paper-cn",
     capital: float = 100000.0,
@@ -57,6 +61,7 @@ def run_cn_daily_selection_pipeline(
 ) -> CNDailySelectionResult:
     reference_result = None
     daily_result = None
+    technical_result = None
     messages = []
     market_context = None
     effective_market_regime = market_regime
@@ -86,6 +91,20 @@ def run_cn_daily_selection_pipeline(
         )
     else:
         messages.append("daily_sync_skipped")
+
+    if run_technical_factors:
+        technical_result = run_stored_bar_factor_pipeline(
+            universe_id=universe_id,
+            as_of=trade_date,
+            interval="1d",
+            lookback_days=technical_lookback_days,
+            universe_storage=universe_storage,
+            bar_storage=market_data_storage,
+            factor_storage=factor_storage,
+            max_symbols=max_symbols,
+        )
+    else:
+        messages.append("technical_factor_sync_skipped")
 
     if market_regime == "auto":
         market_context = build_market_context_snapshot(
@@ -161,6 +180,7 @@ def run_cn_daily_selection_pipeline(
         trade_date=trade_date,
         reference=reference_result,
         daily=daily_result,
+        technical=technical_result,
         market_context=market_context,
         screening=screening_result,
         recommendation=recommendation_result,

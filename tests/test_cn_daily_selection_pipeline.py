@@ -35,6 +35,7 @@ def test_cn_daily_selection_pipeline_runs_data_screen_recommendation_and_portfol
         top_n=2,
         market_regime="neutral",
         capital=100000,
+        run_technical_factors=False,
     )
 
     assert result.reference is not None
@@ -159,6 +160,67 @@ def test_cn_daily_selection_pipeline_auto_market_regime_persists_snapshot_and_dr
     assert result.portfolio is not None
     assert result.portfolio.decision.market_regime == "risk_on"
     assert result.portfolio.decision.action == "allocate"
+
+
+def test_cn_daily_selection_pipeline_computes_technical_factors_from_stored_bars_before_auto_regime():
+    universe_storage = FakeUniverseStorage(
+        [
+            UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01"),
+            UniverseMember("cn_core", "EQUITY:CN:600519", "2026-01-01"),
+        ]
+    )
+    market_data_storage = FakeMarketDataStorage()
+    market_data_storage.seed_bars(_stored_bars("EQUITY:CN:000001", close_offset=10.0))
+    market_data_storage.seed_bars(_stored_bars("EQUITY:CN:600519", close_offset=0.0))
+    market_reality_storage = FakeMarketRealityStorage()
+    factor_storage = FakeFactorStorage()
+    screening_storage = FakeScreeningStorage(
+        preset_results=[
+            ScreenResult(
+                run_id="screen-ce51b9a266f3b376",
+                instrument_id="EQUITY:CN:000001",
+                rank=1,
+                selected=True,
+                total_score=0.80,
+                score_breakdown_json="{}",
+                reason_json="{}",
+                risk_json="{}",
+                evidence_refs_json="{}",
+            )
+        ]
+    )
+    recommendation_storage = FakeRecommendationStorage()
+    portfolio_storage = FakePortfolioStorage()
+
+    result = run_cn_daily_selection_pipeline(
+        universe_id="cn_core",
+        trade_date="2026-05-27",
+        reference_start="2026-05-20",
+        reference_feed=FakeTushareReferenceFeed(),
+        universe_storage=universe_storage,
+        market_data_storage=market_data_storage,
+        market_reality_storage=market_reality_storage,
+        factor_storage=factor_storage,
+        screening_storage=screening_storage,
+        recommendation_storage=recommendation_storage,
+        portfolio_storage=portfolio_storage,
+        top_n=1,
+        market_regime="auto",
+        capital=100000,
+        run_reference=False,
+        run_daily_sync=False,
+        technical_lookback_days=180,
+    )
+
+    assert result.technical is not None
+    assert result.technical.instruments_loaded == 2
+    assert result.technical.factor_values_written == 18
+    assert result.market_context is not None
+    assert result.market_context.risk_regime == "risk_on"
+    assert market_data_storage.load_calls == [
+        ("EQUITY:CN:000001", "1d", "2025-11-28T00:00:00Z", "2026-05-27T23:59:59Z"),
+        ("EQUITY:CN:600519", "1d", "2025-11-28T00:00:00Z", "2026-05-27T23:59:59Z"),
+    ]
 
 
 class FakeTushareReferenceFeed:
@@ -299,6 +361,10 @@ class FakeUniverseStorage:
 
 
 class FakeMarketDataStorage:
+    def __init__(self):
+        self.frames = []
+        self.load_calls = []
+
     def upsert_instruments(self, instruments):
         self.instruments = instruments
         return len(instruments)
@@ -309,7 +375,18 @@ class FakeMarketDataStorage:
 
     def upsert_bars(self, frame):
         self.bars = frame
+        self.frames.append(frame.copy())
         return len(frame)
+
+    def seed_bars(self, frame):
+        self.frames.append(frame.copy())
+
+    def load_bars(self, instrument_id, interval, start, end):
+        self.load_calls.append((instrument_id, interval, start, end))
+        for frame in self.frames:
+            if frame.iloc[0]["instrument_id"] == instrument_id and frame.iloc[0]["interval"] == interval:
+                return frame[(frame["timestamp"] >= start) & (frame["timestamp"] <= end)].copy()
+        return pd.DataFrame()
 
 
 class FakeMarketRealityStorage:
@@ -436,4 +513,28 @@ def _factor(instrument_id, factor_name, value):
         factor_value=value,
         percentile=0.8,
         evidence_json="{}",
+    )
+
+
+def _stored_bars(instrument_id: str, close_offset: float) -> pd.DataFrame:
+    dates = pd.bdate_range("2026-02-18", periods=70)
+    close = pd.Series([100.0 + close_offset + index for index in range(70)])
+    volume = pd.Series([1000.0 + index * 10 for index in range(70)])
+    return pd.DataFrame(
+        {
+            "instrument_id": instrument_id,
+            "timestamp": dates.strftime("%Y-%m-%dT00:00:00Z"),
+            "local_date": dates.strftime("%Y-%m-%d"),
+            "interval": "1d",
+            "source": "tushare",
+            "adjustment": "raw",
+            "open": close - 0.5,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": volume,
+            "amount": close * volume,
+            "currency": "CNY",
+            "is_complete": True,
+        }
     )
