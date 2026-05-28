@@ -211,6 +211,7 @@ def sync_cn_daily(
 @click.option("--skip-reference", is_flag=True, help="Skip Tushare reference/status sync")
 @click.option("--skip-daily-sync", is_flag=True, help="Skip Tushare daily/daily_basic sync")
 @click.option("--skip-portfolio", is_flag=True, help="Skip portfolio decision creation")
+@click.option("--allow-watch-allocation", is_flag=True, help="Allow watch recommendations to receive target allocations")
 @click.option("--account-id", default="paper-cn", show_default=True)
 @click.option("--capital", default=100000.0, show_default=True, type=float)
 @click.option("--base-currency", default="CNY", show_default=True)
@@ -230,6 +231,7 @@ def run_cn_selection(
     skip_reference: bool,
     skip_daily_sync: bool,
     skip_portfolio: bool,
+    allow_watch_allocation: bool,
     account_id: str,
     capital: float,
     base_currency: str,
@@ -267,6 +269,7 @@ def run_cn_selection(
         account_id=account_id,
         capital=capital,
         base_currency=base_currency,
+        allow_watch_allocation=allow_watch_allocation,
     )
     click.echo(
         "CN daily selection complete: "

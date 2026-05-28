@@ -28,9 +28,12 @@ class PortfolioPolicy:
     min_expected_return: float
     market_regime_exposure_json: str
     description: str | None = None
+    allow_watch_allocation: bool = False
 
     def to_record(self) -> dict:
-        return asdict(self)
+        record = asdict(self)
+        record.pop("allow_watch_allocation")
+        return record
 
 
 @dataclass(frozen=True)
@@ -78,4 +81,3 @@ class TargetAllocation:
 
     def to_record(self) -> dict:
         return asdict(self)
-

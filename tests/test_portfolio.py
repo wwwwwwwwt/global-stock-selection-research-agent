@@ -59,6 +59,43 @@ def test_portfolio_decision_can_empty_or_skip_when_risk_bad_or_no_signal():
     assert no_signal.allocations == []
 
 
+def test_portfolio_decision_does_not_allocate_watch_items_by_default():
+    policy = build_default_policy()
+
+    result = build_portfolio_decision(
+        recommendation_run_id="rec-run-test",
+        account_id="paper",
+        decision_date="2026-05-25",
+        market_regime="neutral",
+        capital=100_000,
+        policy=policy,
+        recommendation_items=[_item("rec-watch", "EQUITY:CN:000001", action="watch", confidence=0.95, score=0.62)],
+    )
+
+    assert result.decision.action == "no_new_position"
+    assert result.decision.target_gross_exposure == 0.0
+    assert result.decision.cash_pct == 1.0
+    assert result.allocations == []
+
+
+def test_portfolio_decision_can_allocate_watch_items_when_policy_allows_it():
+    policy = build_default_policy(allow_watch_allocation=True)
+
+    result = build_portfolio_decision(
+        recommendation_run_id="rec-run-test",
+        account_id="paper",
+        decision_date="2026-05-25",
+        market_regime="neutral",
+        capital=100_000,
+        policy=policy,
+        recommendation_items=[_item("rec-watch", "EQUITY:CN:000001", action="watch", confidence=0.95, score=0.62)],
+    )
+
+    assert result.decision.action == "allocate"
+    assert result.allocations[0].action == "watch"
+    assert result.allocations[0].target_weight == 0.1
+
+
 def test_mysql_portfolio_storage_creates_and_upserts_records():
     factory = FakeConnectionFactory()
     storage = MySQLPortfolioStorage(
@@ -162,4 +199,3 @@ class FakeCursor:
     def executemany(self, sql, params):
         self.factory.executed_sql.append(sql)
         self.factory.executed_params.extend(params)
-

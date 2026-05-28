@@ -50,6 +50,7 @@ def run_cn_daily_selection_pipeline(
     account_id: str = "paper-cn",
     capital: float = 100000.0,
     base_currency: str = "CNY",
+    allow_watch_allocation: bool = False,
 ) -> CNDailySelectionResult:
     reference_result = None
     daily_result = None
@@ -113,7 +114,7 @@ def run_cn_daily_selection_pipeline(
     if run_portfolio:
         if portfolio_storage is None:
             raise ValueError("portfolio_storage is required when run_portfolio=True")
-        policy = build_default_policy()
+        policy = build_default_policy(allow_watch_allocation=allow_watch_allocation)
         account = PortfolioAccount(account_id=account_id, base_currency=base_currency, capital=capital)
         items = recommendation_storage.load_recommendation_items(recommendation_result.run_id, actionable_only=True)
         portfolio_result = build_portfolio_decision(

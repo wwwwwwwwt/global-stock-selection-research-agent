@@ -2,6 +2,7 @@ import pandas as pd
 
 from openstockagent.data.models import Instrument, InstrumentAlias
 from openstockagent.pipelines.cn_daily_selection import run_cn_daily_selection_pipeline
+from openstockagent.screening.models import ScreenResult
 from openstockagent.universe.models import UniverseMember
 
 
@@ -47,6 +48,56 @@ def test_cn_daily_selection_pipeline_runs_data_screen_recommendation_and_portfol
     assert result.portfolio.decision.action == "allocate"
     assert portfolio_storage.account.account_id == "paper-cn"
     assert portfolio_storage.allocations
+
+
+def test_cn_daily_selection_pipeline_keeps_cash_when_only_watch_recommendations():
+    universe_storage = FakeUniverseStorage([UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01")])
+    market_data_storage = FakeMarketDataStorage()
+    market_reality_storage = FakeMarketRealityStorage()
+    factor_storage = FakeFactorStorage()
+    screening_storage = FakeScreeningStorage(
+        preset_results=[
+            ScreenResult(
+                run_id="screen-ce51b9a266f3b376",
+                instrument_id="EQUITY:CN:000001",
+                rank=1,
+                selected=True,
+                total_score=0.60,
+                score_breakdown_json="{}",
+                reason_json="{}",
+                risk_json="{}",
+                evidence_refs_json="{}",
+            )
+        ]
+    )
+    recommendation_storage = FakeRecommendationStorage()
+    portfolio_storage = FakePortfolioStorage()
+
+    result = run_cn_daily_selection_pipeline(
+        universe_id="cn_core",
+        trade_date="2026-05-27",
+        reference_start="2026-05-20",
+        reference_feed=FakeWatchOnlyReferenceFeed(),
+        universe_storage=universe_storage,
+        market_data_storage=market_data_storage,
+        market_reality_storage=market_reality_storage,
+        factor_storage=factor_storage,
+        screening_storage=screening_storage,
+        recommendation_storage=recommendation_storage,
+        portfolio_storage=portfolio_storage,
+        top_n=1,
+        market_regime="neutral",
+        capital=100000,
+        run_reference=False,
+        run_daily_sync=False,
+    )
+
+    assert result.recommendation.buy_candidate_count == 0
+    assert result.recommendation.watch_count == 1
+    assert result.portfolio is not None
+    assert result.portfolio.decision.action == "no_new_position"
+    assert result.portfolio.decision.cash_pct == 1.0
+    assert result.portfolio.allocations == []
 
 
 class FakeTushareReferenceFeed:
@@ -122,6 +173,62 @@ class FakeTushareReferenceFeed:
         )
 
 
+class FakeWatchOnlyReferenceFeed(FakeTushareReferenceFeed):
+    def fetch_instruments(self, list_status):
+        return (
+            [
+                Instrument("EQUITY:CN:000001", "000001", "CN", "SZSE", "equity", "CNY", "平安银行", "Asia/Shanghai"),
+            ],
+            [
+                InstrumentAlias("EQUITY:CN:000001", "tushare", "000001.SZ"),
+            ],
+        )
+
+    def fetch_stk_limit(self, trade_date):
+        return pd.DataFrame(
+            {
+                "ts_code": ["000001.SZ"],
+                "trade_date": ["20260527"],
+                "up_limit": [11.0],
+                "down_limit": [9.0],
+            }
+        )
+
+    def fetch_adj_factor(self, trade_date):
+        return pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20260527"], "adj_factor": [2.0]})
+
+    def fetch_daily(self, trade_date):
+        return pd.DataFrame(
+            {
+                "ts_code": ["000001.SZ"],
+                "trade_date": ["20260527"],
+                "open": [10.0],
+                "high": [10.5],
+                "low": [9.8],
+                "close": [10.2],
+                "vol": [1000.0],
+                "amount": [1000.0],
+            }
+        )
+
+    def fetch_daily_basic(self, trade_date):
+        return pd.DataFrame(
+            {
+                "ts_code": ["000001.SZ"],
+                "trade_date": ["20260527"],
+                "turnover_rate": [1.0],
+                "turnover_rate_f": [1.0],
+                "volume_ratio": [1.0],
+                "pe_ttm": [20.0],
+                "pb": [2.0],
+                "ps_ttm": [2.0],
+                "dv_ttm": [1.0],
+                "total_mv": [100000.0],
+                "circ_mv": [80000.0],
+            }
+        )
+
+
 class FakeUniverseStorage:
     def __init__(self, members):
         self.members = members
@@ -181,6 +288,9 @@ class FakeFactorStorage:
 
 
 class FakeScreeningStorage:
+    def __init__(self, preset_results=None):
+        self.preset_results = preset_results
+
     def upsert_strategy(self, strategy):
         self.strategy = strategy
 
@@ -192,7 +302,7 @@ class FakeScreeningStorage:
         return 0
 
     def upsert_screen_results(self, results):
-        self.results = results
+        self.results = self.preset_results if self.preset_results is not None else results
         return len(results)
 
     def load_screen_results(self, run_id, selected_only=False):

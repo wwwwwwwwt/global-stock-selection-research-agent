@@ -35,6 +35,7 @@ def build_default_policy(
     max_new_positions_per_day: int = 5,
     min_recommendation_confidence: float = 0.55,
     min_expected_return: float = 0.0,
+    allow_watch_allocation: bool = False,
 ) -> PortfolioPolicy:
     return PortfolioPolicy(
         policy_id=policy_id,
@@ -47,6 +48,7 @@ def build_default_policy(
         min_expected_return=min_expected_return,
         market_regime_exposure_json=json.dumps(DEFAULT_MARKET_REGIME_EXPOSURE, sort_keys=True),
         description="Balanced MVP portfolio policy with market-regime exposure caps.",
+        allow_watch_allocation=allow_watch_allocation,
     )
 
 
@@ -134,10 +136,13 @@ def build_portfolio_decision(
 
 
 def _actionable_items(items: list[RecommendationItem], policy: PortfolioPolicy) -> list[RecommendationItem]:
+    allowed_actions = {"buy_candidate"}
+    if policy.allow_watch_allocation:
+        allowed_actions.add("watch")
     candidates = [
         item
         for item in items
-        if item.action in {"buy_candidate", "watch"}
+        if item.action in allowed_actions
         and item.confidence >= policy.min_recommendation_confidence
         and (item.expected_return is None or item.expected_return >= policy.min_expected_return)
     ]
@@ -152,4 +157,3 @@ def _market_regime_cap(market_regime: str, policy: PortfolioPolicy) -> float:
 def _stable_decision_id(recommendation_run_id: str, account_id: str, decision_date: str, policy_id: str) -> str:
     payload = "|".join([recommendation_run_id, account_id, decision_date, policy_id])
     return f"portfolio-decision-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
-

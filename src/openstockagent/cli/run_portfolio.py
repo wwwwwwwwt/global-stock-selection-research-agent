@@ -33,6 +33,7 @@ def main():
 @click.option("--max-new-positions-per-day", default=5, show_default=True)
 @click.option("--min-confidence", default=0.55, show_default=True)
 @click.option("--min-expected-return", default=0.0, show_default=True)
+@click.option("--allow-watch-allocation", is_flag=True, help="Allow watch items to receive target allocations")
 @click.option("--mysql-url", default="jdbc:mysql://127.0.0.1:13306/openstockagent", help="MySQL JDBC URL")
 @click.option("--mysql-user", default="root", help="MySQL username")
 @click.option("--mysql-password", default="123456", help="MySQL password")
@@ -51,6 +52,7 @@ def decide(
     max_new_positions_per_day: int,
     min_confidence: float,
     min_expected_return: float,
+    allow_watch_allocation: bool,
     mysql_url: str,
     mysql_user: str,
     mysql_password: str,
@@ -67,6 +69,7 @@ def decide(
         max_new_positions_per_day=max_new_positions_per_day,
         min_recommendation_confidence=min_confidence,
         min_expected_return=min_expected_return,
+        allow_watch_allocation=allow_watch_allocation,
     )
     account = PortfolioAccount(account_id=account_id, base_currency=base_currency, capital=capital)
     items = recommendation_storage.load_recommendation_items(recommendation_run_id, actionable_only=True)
@@ -106,4 +109,3 @@ def decide(
 
 if __name__ == "__main__":
     main()
-

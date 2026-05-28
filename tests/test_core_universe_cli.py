@@ -385,5 +385,53 @@ def test_stock_data_run_cn_selection_cli_runs_end_to_end_pipeline(monkeypatch):
     assert calls["run_reference"] is True
     assert calls["run_daily_sync"] is True
     assert calls["run_portfolio"] is True
+    assert calls["allow_watch_allocation"] is False
     assert "screen_run_id=screen-test" in result.output
     assert "Portfolio: decision_id=decision-test" in result.output
+
+
+def test_stock_data_run_cn_selection_cli_can_enable_watch_allocation(monkeypatch):
+    from openstockagent.cli import stock_data
+    from openstockagent.pipelines.cn_daily_selection import CNDailySelectionResult
+    from openstockagent.recommendations.runner import RecommendationRunResult
+    from openstockagent.screening.runner import ScreeningRunResult
+
+    calls = {}
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return CNDailySelectionResult(
+            universe_id=kwargs["universe_id"],
+            trade_date=kwargs["trade_date"],
+            reference=None,
+            daily=None,
+            screening=ScreeningRunResult("screen-test", "cn_core", "2026-05-27", "1d", 1, 9, 1, 1, 0, [], []),
+            recommendation=RecommendationRunResult(
+                "rec-test", "screen-test", "cn_core", "2026-05-27", "5d", "2026-06-03", "completed", 1, 0, 1, 0, []
+            ),
+            portfolio=None,
+        )
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "env-token")
+    monkeypatch.setattr(stock_data, "TushareReferenceFeed", lambda token=None: object())
+    monkeypatch.setattr(stock_data, "MySQLUniverseStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLMarketDataStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLMarketRealityStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLFactorStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLScreeningStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLRecommendationStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "run_cn_daily_selection_pipeline", fake_run)
+
+    result = CliRunner().invoke(
+        stock_data.main,
+        [
+            "run-cn-selection",
+            "--trade-date",
+            "2026-05-27",
+            "--skip-portfolio",
+            "--allow-watch-allocation",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["allow_watch_allocation"] is True
