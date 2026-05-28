@@ -115,6 +115,61 @@ def test_portfolio_decision_can_link_allocations_to_ready_entry_plans():
     assert json.loads(result.allocations[0].reason_json)["source_entry_plan_id"] == "entry-plan-a"
 
 
+def test_portfolio_decision_rebalances_against_current_positions():
+    policy = build_default_policy(max_single_position_pct=0.1, max_new_positions_per_day=2)
+    positions = [
+        PortfolioPosition("paper", "EQUITY:US:AAPL", 10, 100, 10_000),
+        PortfolioPosition("paper", "EQUITY:US:MSFT", 10, 100, 5_000),
+        PortfolioPosition("paper", "EQUITY:US:OLD", 10, 100, 12_000),
+    ]
+
+    result = build_portfolio_decision(
+        recommendation_run_id="rec-run-test",
+        account_id="paper",
+        decision_date="2026-05-25",
+        market_regime="neutral",
+        capital=100_000,
+        policy=policy,
+        recommendation_items=[
+            _item("rec-a", "EQUITY:US:AAPL", confidence=0.95, score=0.9),
+            _item("rec-b", "EQUITY:US:MSFT", confidence=0.90, score=0.85),
+        ],
+        current_positions=positions,
+    )
+
+    actions = {allocation.instrument_id: allocation.action for allocation in result.allocations}
+    reasons = {allocation.instrument_id: json.loads(allocation.reason_json) for allocation in result.allocations}
+    assert result.decision.action == "rebalance"
+    assert actions == {
+        "EQUITY:US:AAPL": "hold",
+        "EQUITY:US:MSFT": "add",
+        "EQUITY:US:OLD": "reduce",
+    }
+    assert reasons["EQUITY:US:AAPL"]["current_weight"] == 0.1
+    assert reasons["EQUITY:US:MSFT"]["target_weight"] == 0.1
+    assert result.decision.target_gross_exposure == 0.2
+
+
+def test_portfolio_decision_sells_positions_when_market_regime_blocks_exposure():
+    policy = build_default_policy()
+
+    result = build_portfolio_decision(
+        recommendation_run_id="rec-run-test",
+        account_id="paper",
+        decision_date="2026-05-25",
+        market_regime="data_bad",
+        capital=100_000,
+        policy=policy,
+        recommendation_items=[_item("rec-a", "EQUITY:US:AAPL", confidence=0.95, score=0.9)],
+        current_positions=[PortfolioPosition("paper", "EQUITY:US:AAPL", 10, 100, 10_000)],
+    )
+
+    assert result.decision.action == "empty"
+    assert result.decision.target_gross_exposure == 0.0
+    assert result.allocations[0].action == "sell"
+    assert result.allocations[0].target_weight == 0.0
+
+
 def test_mysql_portfolio_storage_creates_and_upserts_records():
     factory = FakeConnectionFactory()
     storage = MySQLPortfolioStorage(
@@ -149,6 +204,34 @@ def test_mysql_portfolio_storage_creates_and_upserts_records():
     assert "ON DUPLICATE KEY UPDATE" in executed_sql
 
 
+def test_mysql_portfolio_storage_loads_positions_by_account():
+    factory = FakeConnectionFactory(
+        rows=[
+            {
+                "account_id": "paper",
+                "instrument_id": "EQUITY:US:AAPL",
+                "quantity": 10,
+                "cost_basis": 100,
+                "market_value": 1200,
+                "unrealized_return": 0.2,
+                "opened_at": "2026-05-01",
+            }
+        ]
+    )
+    storage = MySQLPortfolioStorage(
+        config=MySQLConfig.from_jdbc_url("jdbc:mysql://127.0.0.1:13306/openstockagent", "root", "123456"),
+        connection_factory=factory,
+        ensure_tables=False,
+    )
+
+    positions = storage.load_positions("paper")
+
+    assert positions[0].instrument_id == "EQUITY:US:AAPL"
+    assert positions[0].market_value == 1200.0
+    assert "FROM portfolio_positions" in factory.executed_sql[-1]
+    assert factory.executed_params[-1] == ["paper"]
+
+
 def _item(
     recommendation_id,
     instrument_id,
@@ -178,9 +261,10 @@ def _item(
 
 
 class FakeConnectionFactory:
-    def __init__(self):
+    def __init__(self, rows=None):
         self.executed_sql = []
         self.executed_params = []
+        self.rows = rows or []
 
     def __call__(self, config):
         return FakeConnection(self)
@@ -218,3 +302,6 @@ class FakeCursor:
     def executemany(self, sql, params):
         self.factory.executed_sql.append(sql)
         self.factory.executed_params.extend(params)
+
+    def fetchall(self):
+        return self.factory.rows

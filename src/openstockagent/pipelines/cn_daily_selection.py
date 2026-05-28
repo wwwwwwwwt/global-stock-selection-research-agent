@@ -207,6 +207,11 @@ def run_cn_daily_selection_pipeline(
         items = recommendation_storage.load_recommendation_items(recommendation_result.run_id, actionable_only=True)
         if entry_result is not None:
             items = [item for item in items if item.recommendation_id in entry_plan_ids_by_recommendation_id]
+        current_positions = (
+            portfolio_storage.load_positions(account_id)
+            if hasattr(portfolio_storage, "load_positions")
+            else []
+        )
         portfolio_result = build_portfolio_decision(
             recommendation_run_id=recommendation_result.run_id,
             account_id=account_id,
@@ -215,6 +220,7 @@ def run_cn_daily_selection_pipeline(
             capital=capital,
             policy=policy,
             recommendation_items=items,
+            current_positions=current_positions,
             entry_plan_ids_by_recommendation_id=entry_plan_ids_by_recommendation_id,
         )
         portfolio_storage.upsert_account(account)

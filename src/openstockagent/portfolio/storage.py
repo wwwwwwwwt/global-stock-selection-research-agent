@@ -188,6 +188,23 @@ class MySQLPortfolioStorage:
         )
         return len(records)
 
+    def load_positions(self, account_id: str) -> list[PortfolioPosition]:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT account_id, instrument_id, quantity, cost_basis, market_value,
+                              unrealized_return, opened_at
+                       FROM portfolio_positions
+                       WHERE account_id = %s
+                       ORDER BY market_value DESC, instrument_id ASC""",
+                    [account_id],
+                )
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+        return [_position_from_row(row) for row in rows]
+
     def upsert_decision(self, decision: PortfolioDecision) -> None:
         _execute_one(
             self,
@@ -276,6 +293,36 @@ def _ensure_target_allocations_entry_plan_column(cursor) -> None:
         message = str(exc).lower()
         if "duplicate column" not in message and "duplicate key" not in message:
             raise
+
+
+def _position_from_row(row) -> PortfolioPosition:
+    values = _row_dict(
+        row,
+        [
+            "account_id",
+            "instrument_id",
+            "quantity",
+            "cost_basis",
+            "market_value",
+            "unrealized_return",
+            "opened_at",
+        ],
+    )
+    return PortfolioPosition(
+        account_id=values["account_id"],
+        instrument_id=values["instrument_id"],
+        quantity=float(values["quantity"]),
+        cost_basis=float(values["cost_basis"]),
+        market_value=float(values["market_value"]),
+        unrealized_return=float(values["unrealized_return"]) if values["unrealized_return"] is not None else None,
+        opened_at=values["opened_at"],
+    )
+
+
+def _row_dict(row, columns: list[str]) -> dict:
+    if isinstance(row, dict):
+        return row
+    return dict(zip(columns, row, strict=False))
 
 
 def _connect(config: MySQLConfig):

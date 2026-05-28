@@ -3,6 +3,7 @@ import pandas as pd
 from openstockagent.data.models import Instrument, InstrumentAlias
 from openstockagent.market.models import TradingCalendarDay
 from openstockagent.pipelines.cn_daily_selection import run_cn_daily_selection_pipeline
+from openstockagent.portfolio.models import PortfolioPosition
 from openstockagent.screening.models import ScreenResult
 from openstockagent.universe.models import UniverseMember
 
@@ -103,6 +104,57 @@ def test_cn_daily_selection_pipeline_runs_entry_plans_before_portfolio_allocatio
     assert result.portfolio is not None
     assert result.portfolio.decision.action == "allocate"
     assert result.portfolio.allocations[0].source_entry_plan_id == result.entry.plans[0].plan_id
+
+
+def test_cn_daily_selection_pipeline_rebalances_existing_positions():
+    universe_storage = FakeUniverseStorage([UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01")])
+    market_data_storage = FakeMarketDataStorage()
+    market_data_storage.seed_bars(_breakout_bars("EQUITY:CN:000001"))
+    market_reality_storage = FakeMarketRealityStorage()
+    screening_storage = FakeScreeningStorage(
+        preset_results=[
+            ScreenResult(
+                run_id="screen-ce51b9a266f3b376",
+                instrument_id="EQUITY:CN:000001",
+                rank=1,
+                selected=True,
+                total_score=0.90,
+                score_breakdown_json="{}",
+                reason_json="{}",
+                risk_json="{}",
+                evidence_refs_json="{}",
+            )
+        ]
+    )
+    portfolio_storage = FakePortfolioStorage(
+        positions=[PortfolioPosition("paper-cn", "EQUITY:CN:999999", 100, 10, 10_000)]
+    )
+
+    result = run_cn_daily_selection_pipeline(
+        universe_id="cn_core",
+        trade_date="2026-05-27",
+        reference_start="2026-05-20",
+        reference_feed=FakeTushareReferenceFeed(),
+        universe_storage=universe_storage,
+        market_data_storage=market_data_storage,
+        market_reality_storage=market_reality_storage,
+        factor_storage=FakeFactorStorage(),
+        screening_storage=screening_storage,
+        recommendation_storage=FakeRecommendationStorage(),
+        entry_storage=FakeEntryStorage(),
+        portfolio_storage=portfolio_storage,
+        top_n=1,
+        market_regime="neutral",
+        capital=100000,
+        run_reference=False,
+        run_daily_sync=False,
+        run_technical_factors=False,
+    )
+
+    assert result.portfolio is not None
+    assert result.portfolio.decision.action == "rebalance"
+    assert portfolio_storage.loaded_positions_for == "paper-cn"
+    assert [allocation.action for allocation in result.portfolio.allocations] == ["buy", "reduce"]
 
 
 def test_cn_daily_selection_pipeline_keeps_cash_when_only_watch_recommendations():
@@ -597,6 +649,9 @@ class FakeRecommendationStorage:
 
 
 class FakePortfolioStorage:
+    def __init__(self, positions=None):
+        self.positions = positions or []
+
     def upsert_account(self, account):
         self.account = account
 
@@ -609,6 +664,10 @@ class FakePortfolioStorage:
     def delete_target_allocations(self, decision_id):
         self.deleted_decision_id = decision_id
         return 0
+
+    def load_positions(self, account_id):
+        self.loaded_positions_for = account_id
+        return self.positions
 
     def upsert_target_allocations(self, allocations):
         self.allocations = allocations

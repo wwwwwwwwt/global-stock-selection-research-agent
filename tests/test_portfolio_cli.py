@@ -11,7 +11,6 @@ def test_stock_portfolio_entrypoint_targets_packaged_module():
 
 def test_portfolio_decide_cli_builds_and_persists_decision(monkeypatch):
     from openstockagent.cli import run_portfolio
-    from openstockagent.portfolio.decision import build_default_policy, build_portfolio_decision
     from openstockagent.recommendations.models import RecommendationItem
 
     saved = {"accounts": [], "policies": [], "decisions": [], "allocations": []}
@@ -55,6 +54,10 @@ def test_portfolio_decide_cli_builds_and_persists_decision(monkeypatch):
         def upsert_decision(self, decision):
             saved["decisions"].append(decision)
 
+        def load_positions(self, account_id):
+            saved["loaded_positions_for"] = account_id
+            return []
+
         def delete_target_allocations(self, decision_id):
             saved["deleted"] = decision_id
 
@@ -83,6 +86,7 @@ def test_portfolio_decide_cli_builds_and_persists_decision(monkeypatch):
 
     assert result.exit_code == 0
     assert saved["accounts"][0].account_id == "paper"
+    assert saved["loaded_positions_for"] == "paper"
     assert saved["policies"][0].policy_id == "balanced_v1"
     assert saved["policies"][0].allow_watch_allocation is False
     assert saved["decisions"][0].action == "allocate"
@@ -133,6 +137,9 @@ def test_portfolio_decide_cli_can_enable_watch_allocation(monkeypatch):
         def upsert_decision(self, decision):
             saved["decisions"].append(decision)
 
+        def load_positions(self, account_id):
+            return []
+
         def delete_target_allocations(self, decision_id):
             return 0
 
@@ -167,6 +174,7 @@ def test_portfolio_decide_cli_can_enable_watch_allocation(monkeypatch):
 def test_portfolio_decide_cli_can_allocate_only_ready_entry_plans(monkeypatch):
     from openstockagent.cli import run_portfolio
     from openstockagent.entry.models import EntryPlan
+    from openstockagent.portfolio.models import PortfolioPosition
     from openstockagent.recommendations.models import RecommendationItem
 
     saved = {"decisions": [], "allocations": []}
@@ -255,6 +263,9 @@ def test_portfolio_decide_cli_can_allocate_only_ready_entry_plans(monkeypatch):
         def upsert_decision(self, decision):
             saved["decisions"].append(decision)
 
+        def load_positions(self, account_id):
+            return [PortfolioPosition(account_id, "EQUITY:US:OLD", 10, 100, 10_000)]
+
         def delete_target_allocations(self, decision_id):
             return 0
 
@@ -283,6 +294,7 @@ def test_portfolio_decide_cli_can_allocate_only_ready_entry_plans(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert saved["decisions"][0].action == "allocate"
-    assert [allocation.instrument_id for allocation in saved["allocations"]] == ["EQUITY:US:AAPL"]
+    assert saved["decisions"][0].action == "rebalance"
+    assert [allocation.instrument_id for allocation in saved["allocations"]] == ["EQUITY:US:AAPL", "EQUITY:US:OLD"]
     assert saved["allocations"][0].source_entry_plan_id == "entry-plan-ready"
+    assert saved["allocations"][1].action == "reduce"

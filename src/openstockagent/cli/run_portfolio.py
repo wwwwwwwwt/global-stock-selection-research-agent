@@ -76,6 +76,7 @@ def decide(
     )
     account = PortfolioAccount(account_id=account_id, base_currency=base_currency, capital=capital)
     items = recommendation_storage.load_recommendation_items(recommendation_run_id, actionable_only=True)
+    current_positions = portfolio_storage.load_positions(account_id)
     entry_plan_ids_by_recommendation_id = {}
     if entry_run_id is not None:
         entry_plans = MySQLEntryStorage(config=config).load_entry_plans(entry_run_id, ready_only=True)
@@ -91,6 +92,7 @@ def decide(
         capital=capital,
         policy=policy,
         recommendation_items=items,
+        current_positions=current_positions,
         entry_plan_ids_by_recommendation_id=entry_plan_ids_by_recommendation_id,
     )
     portfolio_storage.upsert_account(account)
@@ -107,6 +109,7 @@ def decide(
         f"action={result.decision.action} "
         f"target_gross_exposure={result.decision.target_gross_exposure:.6f} "
         f"cash_pct={result.decision.cash_pct:.6f} "
+        f"positions={len(current_positions)} "
         f"allocations={len(result.allocations)}"
         + (f" entry_run_id={entry_run_id}" if entry_run_id is not None else "")
     )

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 
-from openstockagent.portfolio.models import PortfolioDecision, PortfolioPolicy, TargetAllocation
+from openstockagent.portfolio.models import PortfolioDecision, PortfolioPolicy, PortfolioPosition, TargetAllocation
 from openstockagent.recommendations.models import RecommendationItem
 
 
@@ -61,6 +61,7 @@ def build_portfolio_decision(
     capital: float,
     policy: PortfolioPolicy,
     recommendation_items: list[RecommendationItem],
+    current_positions: list[PortfolioPosition] | None = None,
     entry_plan_ids_by_recommendation_id: dict[str, str] | None = None,
     decision_id: str | None = None,
 ) -> PortfolioDecisionResult:
@@ -72,24 +73,51 @@ def build_portfolio_decision(
     target_gross = min(target_gross, max(0.0, 1.0 - policy.cash_floor_pct))
     actionable = _actionable_items(recommendation_items, policy)
     entry_plan_ids_by_recommendation_id = entry_plan_ids_by_recommendation_id or {}
+    current_positions = current_positions or []
+    current_weights = _current_position_weights(current_positions, capital)
 
     if target_gross <= 0:
         action = "empty"
         reason = {"reason": "market_regime_blocks_exposure", "market_regime": market_regime}
-        allocations: list[TargetAllocation] = []
+        allocations = [
+            _exit_allocation(
+                decision_id=decision_id,
+                position=position,
+                capital=capital,
+                action="sell",
+                reason="market_regime_blocks_exposure",
+            )
+            for position in current_positions
+            if position.market_value > 0
+        ]
     elif not actionable:
         action = "no_new_position"
         reason = {"reason": "no_actionable_recommendations", "market_regime": market_regime}
-        allocations = []
+        allocations = [
+            _exit_allocation(
+                decision_id=decision_id,
+                position=position,
+                capital=capital,
+                action="reduce",
+                reason="no_actionable_recommendations",
+            )
+            for position in current_positions
+            if position.market_value > 0
+        ]
         target_gross = 0.0
     else:
         selected = actionable[: min(policy.max_positions, policy.max_new_positions_per_day)]
         per_name = min(policy.max_single_position_pct, target_gross / len(selected))
+        selected_instruments = {item.instrument_id for item in selected}
         allocations = [
             TargetAllocation(
                 decision_id=decision_id,
                 instrument_id=item.instrument_id,
-                action="buy" if item.action == "buy_candidate" else "watch",
+                action=_target_action(
+                    item=item,
+                    current_weight=current_weights.get(item.instrument_id, 0.0),
+                    target_weight=per_name,
+                ),
                 target_weight=round(per_name, 8),
                 max_position_value=round(capital * per_name, 2),
                 source_recommendation_id=item.recommendation_id,
@@ -101,6 +129,8 @@ def build_portfolio_decision(
                         "source_entry_plan_id": entry_plan_ids_by_recommendation_id.get(
                             item.recommendation_id
                         ),
+                        "current_weight": round(current_weights.get(item.instrument_id, 0.0), 8),
+                        "target_weight": round(per_name, 8),
                     },
                     sort_keys=True,
                 ),
@@ -109,12 +139,24 @@ def build_portfolio_decision(
             )
             for item in selected
         ]
+        allocations.extend(
+            _exit_allocation(
+                decision_id=decision_id,
+                position=position,
+                capital=capital,
+                action="reduce",
+                reason="position_not_in_selected_targets",
+            )
+            for position in current_positions
+            if position.instrument_id not in selected_instruments and position.market_value > 0
+        )
         target_gross = round(sum(allocation.target_weight for allocation in allocations), 8)
-        action = "allocate" if target_gross > 0 else "no_new_position"
+        action = "rebalance" if current_positions else ("allocate" if target_gross > 0 else "no_new_position")
         reason = {
             "reason": "allocated_from_recommendations",
             "market_regime": market_regime,
             "selected_count": len(selected),
+            "current_position_count": len(current_positions),
         }
 
     decision = PortfolioDecision(
@@ -158,6 +200,56 @@ def _actionable_items(items: list[RecommendationItem], policy: PortfolioPolicy) 
 def _market_regime_cap(market_regime: str, policy: PortfolioPolicy) -> float:
     caps = json.loads(policy.market_regime_exposure_json)
     return float(caps.get(market_regime, caps.get("unknown", 0.0)))
+
+
+def _current_position_weights(positions: list[PortfolioPosition], capital: float) -> dict[str, float]:
+    return {
+        position.instrument_id: max(0.0, float(position.market_value) / capital)
+        for position in positions
+        if position.market_value > 0
+    }
+
+
+def _target_action(item: RecommendationItem, current_weight: float, target_weight: float) -> str:
+    if item.action == "watch" and current_weight <= 0:
+        return "watch"
+    if current_weight <= 0:
+        return "buy"
+    tolerance = max(0.005, target_weight * 0.2)
+    if current_weight < target_weight - tolerance:
+        return "add"
+    if current_weight > target_weight + tolerance:
+        return "reduce"
+    return "hold"
+
+
+def _exit_allocation(
+    *,
+    decision_id: str,
+    position: PortfolioPosition,
+    capital: float,
+    action: str,
+    reason: str,
+) -> TargetAllocation:
+    current_weight = max(0.0, float(position.market_value) / capital)
+    return TargetAllocation(
+        decision_id=decision_id,
+        instrument_id=position.instrument_id,
+        action=action,
+        target_weight=0.0,
+        max_position_value=0.0,
+        source_recommendation_id=None,
+        reason_json=json.dumps(
+            {
+                "reason": reason,
+                "current_weight": round(current_weight, 8),
+                "target_weight": 0.0,
+                "market_value": position.market_value,
+            },
+            sort_keys=True,
+        ),
+        risk_json=json.dumps({"position_exit": True}, sort_keys=True),
+    )
 
 
 def _stable_decision_id(recommendation_run_id: str, account_id: str, decision_date: str, policy_id: str) -> str:
