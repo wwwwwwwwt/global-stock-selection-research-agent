@@ -266,6 +266,22 @@ class MySQLMarketRealityStorage:
             connection.close()
         return _status_from_row(row) if row is not None else None
 
+    def load_trading_calendar_day(self, market: str, calendar_date: str) -> TradingCalendarDay | None:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT market, calendar_date, is_trading_day, session_type,
+                              open_time, close_time, source, notes_json
+                       FROM trading_calendar
+                       WHERE market = %s AND calendar_date = %s""",
+                    [market.upper(), calendar_date],
+                )
+                row = cursor.fetchone()
+        finally:
+            connection.close()
+        return _calendar_day_from_row(row) if row is not None else None
+
     def next_trading_date(self, market: str, start_date: str, offset: int = 1) -> str | None:
         connection = self.connection_factory(self.config)
         try:
@@ -313,6 +329,29 @@ def _connect(config: MySQLConfig):
     from pymysql.cursors import DictCursor
 
     return pymysql.connect(**config.to_connection_kwargs(), cursorclass=DictCursor)
+
+
+def _calendar_day_from_row(row) -> TradingCalendarDay:
+    values = row if isinstance(row, dict) else {
+        "market": row[0],
+        "calendar_date": row[1],
+        "is_trading_day": row[2],
+        "session_type": row[3],
+        "open_time": row[4],
+        "close_time": row[5],
+        "source": row[6],
+        "notes_json": row[7],
+    }
+    return TradingCalendarDay(
+        market=values["market"],
+        calendar_date=str(values["calendar_date"]),
+        is_trading_day=bool(values["is_trading_day"]),
+        session_type=values["session_type"],
+        open_time=values["open_time"],
+        close_time=values["close_time"],
+        source=values["source"],
+        notes_json=values["notes_json"],
+    )
 
 
 def _status_from_row(row) -> InstrumentStatus:

@@ -407,6 +407,40 @@ class MySQLMarketDataStorage:
             connection.close()
         return pd.DataFrame(_rows_as_dicts(rows))
 
+    def latest_bar_date_for_instruments(
+        self,
+        instrument_ids: list[str],
+        interval: str,
+        source: str | None = None,
+        adjustment: str | None = None,
+    ) -> str | None:
+        if not instrument_ids:
+            return None
+        placeholders = ", ".join(["%s"] * len(instrument_ids))
+        sql = f"""SELECT MAX(local_date) AS latest_bar_date
+                  FROM bars
+                  WHERE instrument_id IN ({placeholders})
+                    AND bar_interval = %s
+                    AND is_complete = 1"""
+        params: list[object] = [*instrument_ids, interval]
+        if source is not None:
+            sql += "\n                    AND source = %s"
+            params.append(source)
+        if adjustment is not None:
+            sql += "\n                    AND adjustment = %s"
+            params.append(adjustment)
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                row = cursor.fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        value = row["latest_bar_date"] if isinstance(row, dict) else row[0]
+        return None if value is None else str(value)
+
     def upsert_feed_run_records(self, records: list[dict]) -> int:
         if not records:
             return 0

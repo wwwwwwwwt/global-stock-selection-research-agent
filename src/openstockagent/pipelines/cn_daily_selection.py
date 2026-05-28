@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from openstockagent.data.readiness import DataReadinessCheck, check_selection_data_readiness
 from openstockagent.market.models import MarketContextSnapshot
 from openstockagent.market.regime import build_market_context_snapshot
 from openstockagent.portfolio.decision import PortfolioDecisionResult, build_default_policy, build_portfolio_decision
@@ -25,6 +26,7 @@ class CNDailySelectionResult:
     screening: ScreeningRunResult
     recommendation: RecommendationRunResult
     technical: StoredBarFactorRunResult | None = None
+    data_readiness: DataReadinessCheck | None = None
     market_context: MarketContextSnapshot | None = None
     portfolio: PortfolioDecisionResult | None = None
     messages: list[str] = field(default_factory=list)
@@ -106,6 +108,19 @@ def run_cn_daily_selection_pipeline(
     else:
         messages.append("technical_factor_sync_skipped")
 
+    data_readiness = check_selection_data_readiness(
+        universe_id=universe_id,
+        as_of=trade_date,
+        market="CN",
+        universe_storage=universe_storage,
+        bar_storage=market_data_storage,
+        factor_storage=factor_storage,
+        market_reality_storage=market_reality_storage,
+        interval="1d",
+        adjustment="split_adjusted",
+    )
+    messages.append(data_readiness.to_message())
+
     if market_regime == "auto":
         market_context = build_market_context_snapshot(
             universe_id=universe_id,
@@ -120,6 +135,10 @@ def run_cn_daily_selection_pipeline(
             market_reality_storage.upsert_market_context_snapshot(market_context)
         else:
             messages.append("market_context_storage_skipped")
+
+    if data_readiness.should_block_recommendations:
+        effective_market_regime = "data_bad"
+        messages.append(f"market_regime_overridden_by_data_readiness={data_readiness.data_status}")
 
     strategy = build_default_strategy(
         hard_filters={
@@ -186,4 +205,5 @@ def run_cn_daily_selection_pipeline(
         recommendation=recommendation_result,
         portfolio=portfolio_result,
         messages=messages,
+        data_readiness=data_readiness,
     )

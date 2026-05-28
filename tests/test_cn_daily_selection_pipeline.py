@@ -1,6 +1,7 @@
 import pandas as pd
 
 from openstockagent.data.models import Instrument, InstrumentAlias
+from openstockagent.market.models import TradingCalendarDay
 from openstockagent.pipelines.cn_daily_selection import run_cn_daily_selection_pipeline
 from openstockagent.screening.models import ScreenResult
 from openstockagent.universe.models import UniverseMember
@@ -223,6 +224,58 @@ def test_cn_daily_selection_pipeline_computes_technical_factors_from_stored_bars
     ]
 
 
+def test_cn_daily_selection_pipeline_blocks_recommendations_when_trading_day_data_is_not_ready():
+    universe_storage = FakeUniverseStorage([UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01")])
+    screening_storage = FakeScreeningStorage(
+        preset_results=[
+            ScreenResult(
+                run_id="screen-ce51b9a266f3b376",
+                instrument_id="EQUITY:CN:000001",
+                rank=1,
+                selected=True,
+                total_score=0.90,
+                score_breakdown_json="{}",
+                reason_json="{}",
+                risk_json="{}",
+                evidence_refs_json="{}",
+            )
+        ]
+    )
+    recommendation_storage = FakeRecommendationStorage()
+    portfolio_storage = FakePortfolioStorage()
+
+    result = run_cn_daily_selection_pipeline(
+        universe_id="cn_core",
+        trade_date="2026-05-27",
+        reference_start="2026-05-20",
+        reference_feed=FakeTushareReferenceFeed(),
+        universe_storage=universe_storage,
+        market_data_storage=FakeStaleMarketDataStorage(),
+        market_reality_storage=FakeTradingDayMarketRealityStorage(),
+        factor_storage=FakeFactorStorage(),
+        screening_storage=screening_storage,
+        recommendation_storage=recommendation_storage,
+        portfolio_storage=portfolio_storage,
+        top_n=1,
+        market_regime="neutral",
+        capital=100000,
+        run_reference=False,
+        run_daily_sync=False,
+        run_technical_factors=False,
+    )
+
+    assert result.data_readiness is not None
+    assert result.data_readiness.data_status == "market_not_ready"
+    assert result.recommendation.buy_candidate_count == 0
+    assert result.recommendation.skip_count == 1
+    assert recommendation_storage.run.market_regime == "data_bad"
+    assert result.portfolio is not None
+    assert result.portfolio.decision.action == "empty"
+    assert result.portfolio.decision.cash_pct == 1.0
+    assert any(message.startswith("data_readiness=market_not_ready") for message in result.messages)
+    assert "market_regime_overridden_by_data_readiness=market_not_ready" in result.messages
+
+
 class FakeTushareReferenceFeed:
     def fetch_instruments(self, list_status):
         return (
@@ -393,6 +446,15 @@ class FakeMarketDataStorage:
         return pd.DataFrame()
 
 
+class FakeStaleMarketDataStorage(FakeMarketDataStorage):
+    def latest_bar_date_for_instruments(self, instrument_ids, interval, source=None, adjustment=None):
+        assert instrument_ids == ["EQUITY:CN:000001"]
+        assert interval == "1d"
+        assert source is None
+        assert adjustment == "split_adjusted"
+        return "2026-05-24"
+
+
 class FakeMarketRealityStorage:
     def __init__(self):
         self.statuses = {}
@@ -414,6 +476,11 @@ class FakeMarketRealityStorage:
 
     def upsert_market_context_snapshot(self, snapshot):
         self.market_context = snapshot
+
+
+class FakeTradingDayMarketRealityStorage(FakeMarketRealityStorage):
+    def load_trading_calendar_day(self, market, calendar_date):
+        return TradingCalendarDay(market=market, calendar_date=calendar_date, is_trading_day=True, source="test")
 
 
 class FakeFactorStorage:

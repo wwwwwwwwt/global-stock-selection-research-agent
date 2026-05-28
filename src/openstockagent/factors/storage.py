@@ -134,6 +134,27 @@ class MySQLFactorStorage:
             connection.close()
         return [_factor_value_from_row(row) for row in rows]
 
+    def latest_factor_date_for_instruments(self, instrument_ids: list[str], interval: str) -> str | None:
+        if not instrument_ids:
+            return None
+        placeholders = ", ".join(["%s"] * len(instrument_ids))
+        sql = f"""SELECT MAX(trade_date) AS latest_factor_date
+                  FROM factor_values
+                  WHERE instrument_id IN ({placeholders})
+                    AND bar_interval = %s"""
+        params: list[object] = [*instrument_ids, interval]
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                row = cursor.fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        value = row["latest_factor_date"] if isinstance(row, dict) else row[0]
+        return None if value is None else str(value)
+
 
 def _connect(config: MySQLConfig):
     import pymysql

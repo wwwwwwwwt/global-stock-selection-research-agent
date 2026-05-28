@@ -99,3 +99,21 @@ def test_research_evaluate_screen_cli_runs_pipeline(monkeypatch):
     assert "Screen evaluation complete" in result.output
     assert "mean_excess_return=0.040000" in result.output
     assert "1. EQUITY:CN:000001 return=0.050000 excess=0.040000" in result.output
+
+
+def test_research_init_db_cli_initializes_storage(monkeypatch):
+    from openstockagent.cli import stock_research
+
+    created = {}
+
+    class FakeResearchStorage:
+        def __init__(self, config):
+            created["config"] = config
+
+    monkeypatch.setattr(stock_research, "MySQLResearchStorage", FakeResearchStorage)
+
+    result = CliRunner().invoke(stock_research.main, ["init-db"])
+
+    assert result.exit_code == 0
+    assert created["config"].database == "openstockagent"
+    assert "Research storage initialized" in result.output

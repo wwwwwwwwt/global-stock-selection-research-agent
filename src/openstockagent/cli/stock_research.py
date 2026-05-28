@@ -15,6 +15,17 @@ def main():
     """Evaluate and backtest stock-selection research outputs."""
 
 
+@main.command("init-db")
+@click.option("--mysql-url", default="jdbc:mysql://127.0.0.1:13306/openstockagent", help="MySQL JDBC URL")
+@click.option("--mysql-user", default="root", help="MySQL username")
+@click.option("--mysql-password", default="123456", help="MySQL password")
+def init_db(mysql_url: str, mysql_user: str, mysql_password: str):
+    """Create research evaluation tables if they do not exist."""
+    config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
+    MySQLResearchStorage(config=config)
+    click.echo("Research storage initialized")
+
+
 @main.command("evaluate-screen")
 @click.option("--screen-run-id", required=True, help="Screen run id to evaluate")
 @click.option("--as-of", required=True, help="Selection date, e.g. 2026-05-28")

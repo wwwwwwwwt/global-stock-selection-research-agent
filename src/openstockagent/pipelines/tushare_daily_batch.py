@@ -68,15 +68,15 @@ def run_tushare_daily_batch_sync(
         daily_frame = reference_feed.fetch_daily(trade_date=trade_date)
         daily_rows_seen = len(daily_frame)
         matched_daily = _filter_source_symbols(daily_frame, source_symbols)
-        matched_symbols.update(matched_daily["ts_code"].astype(str).tolist())
+        matched_symbols.update(_source_symbols(matched_daily))
         canonical_bars = _canonical_bars_from_daily(matched_daily, source_to_instrument)
-        bars_written = bar_storage.upsert_bars(canonical_bars)
+        bars_written = 0 if canonical_bars.empty else bar_storage.upsert_bars(canonical_bars)
 
     if include_daily_basic:
         daily_basic_frame = reference_feed.fetch_daily_basic(trade_date=trade_date)
         daily_basic_rows_seen = len(daily_basic_frame)
         matched_daily_basic = _filter_source_symbols(daily_basic_frame, source_symbols)
-        matched_symbols.update(matched_daily_basic["ts_code"].astype(str).tolist())
+        matched_symbols.update(_source_symbols(matched_daily_basic))
         values = _daily_basic_factor_values(matched_daily_basic, source_to_instrument, trade_date)
         scored_values = add_cross_section_scores(values)
         factor_storage.upsert_factor_definitions(
@@ -98,9 +98,17 @@ def run_tushare_daily_batch_sync(
 
 def _filter_source_symbols(frame: pd.DataFrame, source_symbols: set[str]) -> pd.DataFrame:
     if frame is None or frame.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["ts_code"])
+    if "ts_code" not in frame.columns:
+        return pd.DataFrame(columns=frame.columns)
     filtered = frame[frame["ts_code"].astype(str).isin(source_symbols)].copy()
     return filtered.reset_index(drop=True)
+
+
+def _source_symbols(frame: pd.DataFrame) -> list[str]:
+    if frame.empty or "ts_code" not in frame.columns:
+        return []
+    return frame["ts_code"].astype(str).tolist()
 
 
 def _canonical_bars_from_daily(frame: pd.DataFrame, source_to_instrument: dict[str, str]) -> pd.DataFrame:

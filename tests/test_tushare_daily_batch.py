@@ -47,6 +47,35 @@ def test_tushare_daily_batch_sync_filters_universe_and_writes_bars_and_daily_bas
     assert all(value.percentile is not None for value in pe_values)
 
 
+def test_tushare_daily_batch_sync_handles_empty_provider_frames_without_crashing():
+    universe_storage = FakeUniverseStorage(
+        [
+            UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01"),
+            UniverseMember("cn_core", "EQUITY:CN:600519", "2026-01-01"),
+        ]
+    )
+    bar_storage = FakeBarStorage()
+    factor_storage = FakeFactorStorage()
+
+    result = run_tushare_daily_batch_sync(
+        universe_id="cn_core",
+        trade_date="2026-05-27",
+        reference_feed=FakeEmptyTushareReferenceFeed(),
+        universe_storage=universe_storage,
+        bar_storage=bar_storage,
+        factor_storage=factor_storage,
+    )
+
+    assert result.members_seen == 2
+    assert result.daily_rows_seen == 0
+    assert result.daily_basic_rows_seen == 0
+    assert result.instruments_matched == 0
+    assert result.bars_written == 0
+    assert result.factor_values_written == 0
+    assert not hasattr(bar_storage, "frame")
+    assert factor_storage.values == []
+
+
 class FakeTushareReferenceFeed:
     def fetch_daily(self, trade_date):
         assert trade_date == "2026-05-27"
@@ -82,6 +111,16 @@ class FakeTushareReferenceFeed:
         )
 
 
+class FakeEmptyTushareReferenceFeed(FakeTushareReferenceFeed):
+    def fetch_daily(self, trade_date):
+        assert trade_date == "2026-05-27"
+        return pd.DataFrame()
+
+    def fetch_daily_basic(self, trade_date):
+        assert trade_date == "2026-05-27"
+        return pd.DataFrame()
+
+
 class FakeUniverseStorage:
     def __init__(self, members):
         self.members = members
@@ -98,6 +137,9 @@ class FakeBarStorage:
 
 
 class FakeFactorStorage:
+    def __init__(self):
+        self.values = []
+
     def upsert_factor_definitions(self, definitions):
         self.definitions = definitions
         return len(definitions)
