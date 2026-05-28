@@ -70,6 +70,11 @@ def test_mysql_market_reality_storage_creates_upserts_and_loads_status():
         "summary_json": "{}",
     }
     snapshot = storage.load_market_context_snapshot("ctx-test")
+    factory.fetchall_rows = [
+        {"calendar_date": "2026-05-25"},
+        {"calendar_date": "2026-05-26"},
+    ]
+    trading_dates = storage.load_trading_dates("CN", "2026-05-20", "2026-05-31")
 
     executed_sql = "\n".join(factory.executed_sql)
     assert "CREATE TABLE IF NOT EXISTS trading_calendar" in executed_sql
@@ -83,6 +88,8 @@ def test_mysql_market_reality_storage_creates_upserts_and_loads_status():
     assert snapshot is not None
     assert snapshot.risk_regime == "neutral"
     assert snapshot.regime_score == 0.55
+    assert trading_dates == ["2026-05-25", "2026-05-26"]
+    assert "calendar_date >= %s" in executed_sql
 
 
 class FakeCalendarStorage:

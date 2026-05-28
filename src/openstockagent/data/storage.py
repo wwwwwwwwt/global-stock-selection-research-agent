@@ -407,6 +407,50 @@ class MySQLMarketDataStorage:
             connection.close()
         return pd.DataFrame(_rows_as_dicts(rows))
 
+    def load_bars_for_instruments(
+        self,
+        instrument_ids: list[str],
+        interval: str,
+        start: str,
+        end: str,
+        source: str | None = None,
+        adjustment: str | None = None,
+    ) -> dict[str, pd.DataFrame]:
+        if not instrument_ids:
+            return {}
+        placeholders = ", ".join(["%s"] * len(instrument_ids))
+        sql = f"""SELECT instrument_id, bar_timestamp AS `timestamp`, local_date,
+                         bar_interval AS `interval`, source, adjustment,
+                         open, high, low, close, volume, amount, currency,
+                         is_complete, provider_payload_hash
+                  FROM bars
+                  WHERE instrument_id IN ({placeholders})
+                    AND bar_interval = %s
+                    AND bar_timestamp >= %s
+                    AND bar_timestamp <= %s"""
+        params: list[object] = [*instrument_ids, interval, start, end]
+        if source is not None:
+            sql += "\n                    AND source = %s"
+            params.append(source)
+        if adjustment is not None:
+            sql += "\n                    AND adjustment = %s"
+            params.append(adjustment)
+        sql += "\n                  ORDER BY instrument_id ASC, bar_timestamp ASC"
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+        frame = pd.DataFrame(_rows_as_dicts(rows))
+        if frame.empty:
+            return {}
+        return {
+            instrument_id: group.reset_index(drop=True)
+            for instrument_id, group in frame.groupby("instrument_id", sort=False)
+        }
+
     def latest_bar_date_for_instruments(
         self,
         instrument_ids: list[str],

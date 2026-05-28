@@ -22,6 +22,9 @@
 - Create `src/openstockagent/research/rolling.py`: run factor calculation, screening, and screen evaluation over a historical rebalance schedule.
 - Modify `src/openstockagent/research/models.py`: add research experiment run/day models.
 - Modify `src/openstockagent/research/storage.py`: persist research experiment summaries and per-date links.
+- Modify `src/openstockagent/market/storage.py`: load trading dates over a calendar range for market-aware rebalance schedules.
+- Modify `src/openstockagent/data/storage.py`: load bars for multiple instruments in one query for factor batch jobs.
+- Modify `src/openstockagent/pipelines/real_data_factors.py`: prefer batch bar loading when storage supports it.
 - Test `tests/test_tushare_daily_batch.py`: empty provider frames do not crash.
 - Test `tests/test_cn_daily_selection_pipeline.py`: stale data readiness gates recommendation/portfolio behavior.
 - Test `tests/test_research_cli.py`: `stock-research init-db` initializes research tables.
@@ -99,3 +102,27 @@
 - [x] Run `/opt/homebrew/bin/uv run pytest tests/test_research_rolling.py tests/test_research_evaluation.py tests/test_research_cli.py`.
 - [x] Run `/opt/homebrew/bin/uv run pytest`.
 - [x] Commit with `feat: add rolling screen evaluation`.
+
+## Task 7: Market Calendar And Batch Bar Loading
+
+**Files:**
+- Modify: `src/openstockagent/market/storage.py`
+- Modify: `src/openstockagent/data/storage.py`
+- Modify: `src/openstockagent/pipelines/real_data_factors.py`
+- Modify: `src/openstockagent/research/rolling.py`
+- Modify: `src/openstockagent/cli/stock_research.py`
+- Test: `tests/test_market_reality.py`
+- Test: `tests/test_market_storage.py`
+- Test: `tests/test_real_data_factor_pipeline.py`
+- Test: `tests/test_research_rolling.py`
+- Test: `tests/test_research_cli.py`
+
+- [x] Add `load_trading_dates` so rolling research can use real market calendars instead of generic business days.
+- [x] Add `load_bars_for_instruments` to fetch a universe's bars in one query.
+- [x] Make stored-bar factor calculation prefer the batch loader when available, with the old per-symbol path as fallback.
+- [x] Add `--market` to `stock-research rolling-screen` and pass the market reality storage as the calendar provider.
+- [x] Run `/opt/homebrew/bin/uv run pytest tests/test_market_storage.py tests/test_market_reality.py tests/test_real_data_factor_pipeline.py tests/test_research_rolling.py tests/test_research_cli.py`.
+- [x] Run real smoke: `stock-research rolling-screen --universe cn_core_research_static --start-date 2026-05-20 --end-date 2026-05-27 --horizon-days 1 --rebalance weekly --market CN --top-n 5 --lookback-days 365 --source tushare --max-dates 1`.
+- [x] Run full real window: `stock-research rolling-screen --universe cn_core_research_static --start-date 2026-04-03 --end-date 2026-05-15 --horizon-days 5 --rebalance weekly --top-n 10 --lookback-days 365 --source tushare`.
+- [x] Run `/opt/homebrew/bin/uv run pytest`.
+- [x] Commit with `feat: use market calendar for rolling research`.

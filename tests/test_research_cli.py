@@ -194,6 +194,8 @@ def test_research_rolling_screen_cli_runs_pipeline(monkeypatch):
             "2",
             "--rebalance",
             "weekly",
+            "--market",
+            "CN",
             "--top-n",
             "3",
             "--lookback-days",
@@ -211,10 +213,12 @@ def test_research_rolling_screen_cli_runs_pipeline(monkeypatch):
     assert calls["end_date"] == "2026-05-29"
     assert calls["horizon_days"] == 2
     assert calls["rebalance_frequency"] == "weekly"
+    assert calls["market"] == "CN"
     assert calls["top_n"] == 3
     assert calls["lookback_days"] == 180
     assert calls["benchmark_instrument_id"] == "EQUITY:CN:000300"
     assert calls["max_dates"] == 2
+    assert calls["calendar_storage"] is calls["market_reality_storage"]
     assert "Rolling screen evaluation complete" in result.output
     assert "experiment_id=research-exp-test" in result.output
     assert "hit_rate=0.750000" in result.output

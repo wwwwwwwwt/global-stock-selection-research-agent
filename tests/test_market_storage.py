@@ -161,6 +161,75 @@ def test_mysql_market_storage_load_bars_can_filter_source_and_adjustment():
     ]
 
 
+def test_mysql_market_storage_loads_bars_for_multiple_instruments():
+    factory = FakeConnectionFactory(
+        fetchall_rows=[
+            [
+                {
+                    "instrument_id": "EQUITY:CN:000001",
+                    "timestamp": "2026-05-20T00:00:00Z",
+                    "local_date": "2026-05-20",
+                    "interval": "1d",
+                    "source": "tushare",
+                    "adjustment": "split_adjusted",
+                    "open": 10.0,
+                    "high": 10.5,
+                    "low": 9.8,
+                    "close": 10.2,
+                    "volume": 1000.0,
+                    "amount": 10200.0,
+                    "currency": "CNY",
+                    "is_complete": 1,
+                    "provider_payload_hash": None,
+                },
+                {
+                    "instrument_id": "EQUITY:CN:600519",
+                    "timestamp": "2026-05-20T00:00:00Z",
+                    "local_date": "2026-05-20",
+                    "interval": "1d",
+                    "source": "tushare",
+                    "adjustment": "split_adjusted",
+                    "open": 100.0,
+                    "high": 102.0,
+                    "low": 99.0,
+                    "close": 101.0,
+                    "volume": 200.0,
+                    "amount": 20200.0,
+                    "currency": "CNY",
+                    "is_complete": 1,
+                    "provider_payload_hash": None,
+                },
+            ]
+        ]
+    )
+    storage = MySQLMarketDataStorage(config=MYSQL_CONFIG, connection_factory=factory)
+
+    loaded = storage.load_bars_for_instruments(
+        ["EQUITY:CN:000001", "EQUITY:CN:600519"],
+        "1d",
+        "2026-05-01T00:00:00Z",
+        "2026-05-20T23:59:59Z",
+        source="tushare",
+        adjustment="split_adjusted",
+    )
+
+    executed_sql = factory.executed_sql[-1]
+    assert "instrument_id IN (%s, %s)" in executed_sql
+    assert "AND source = %s" in executed_sql
+    assert "AND adjustment = %s" in executed_sql
+    assert list(loaded) == ["EQUITY:CN:000001", "EQUITY:CN:600519"]
+    assert list(loaded["EQUITY:CN:000001"]["close"]) == [10.2]
+    assert factory.executed_params[-1] == [
+        "EQUITY:CN:000001",
+        "EQUITY:CN:600519",
+        "1d",
+        "2026-05-01T00:00:00Z",
+        "2026-05-20T23:59:59Z",
+        "tushare",
+        "split_adjusted",
+    ]
+
+
 def test_mysql_market_storage_saves_prediction_summary():
     factory = FakeConnectionFactory(
         fetchone_rows=[

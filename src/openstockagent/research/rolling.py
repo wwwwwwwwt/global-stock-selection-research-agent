@@ -36,6 +36,8 @@ def run_rolling_screen_evaluation(
     screening_storage,
     research_storage,
     market_reality_storage=None,
+    calendar_storage=None,
+    market: str | None = None,
     interval: str = "1d",
     lookback_days: int = 365,
     source: str | None = None,
@@ -55,7 +57,13 @@ def run_rolling_screen_evaluation(
         raise ValueError("lookback_days must be positive")
 
     strategy = build_default_strategy(max_candidates=top_n)
-    dates = rebalance_dates(start_date, end_date, rebalance_frequency)
+    dates = rebalance_dates(
+        start_date,
+        end_date,
+        rebalance_frequency,
+        calendar_storage=calendar_storage,
+        market=market,
+    )
     if max_dates is not None:
         dates = dates[:max_dates]
     experiment_id = experiment_id or _stable_experiment_id(
@@ -68,6 +76,7 @@ def run_rolling_screen_evaluation(
         strategy_name=strategy.strategy_name,
         strategy_version=strategy.version,
         benchmark_instrument_id=benchmark_instrument_id,
+        market=market,
     )
 
     experiment_days = []
@@ -121,6 +130,7 @@ def run_rolling_screen_evaluation(
         days=experiment_days,
         evaluations=evaluations,
         errors=errors,
+        market=market,
     )
     experiment = ResearchExperimentRun(
         experiment_id=experiment_id,
@@ -147,8 +157,15 @@ def run_rolling_screen_evaluation(
     )
 
 
-def rebalance_dates(start_date: str, end_date: str, frequency: str) -> list[str]:
-    dates = pd.bdate_range(start=start_date, end=end_date)
+def rebalance_dates(
+    start_date: str,
+    end_date: str,
+    frequency: str,
+    calendar_storage=None,
+    market: str | None = None,
+) -> list[str]:
+    stored_dates = _stored_trading_dates(calendar_storage, market, start_date, end_date)
+    dates = pd.to_datetime(stored_dates) if stored_dates else pd.bdate_range(start=start_date, end=end_date)
     if dates.empty:
         return []
     if frequency == "daily":
@@ -190,6 +207,7 @@ def _experiment_summary(
     days: list[ResearchExperimentDay],
     evaluations: list[ScreenBacktestEvaluation],
     errors: list[str],
+    market: str | None,
 ) -> dict:
     results = [result for evaluation in evaluations for result in evaluation.results]
     returns = [result.forward_return for result in results]
@@ -206,8 +224,21 @@ def _experiment_summary(
         "mean_excess_return": _mean(excess_returns),
         "hit_rate": _mean([1.0 if result.hit else 0.0 for result in results]),
         "mean_max_drawdown": _mean(drawdowns),
+        "market": market,
         "errors": errors[:20],
     }
+
+
+def _stored_trading_dates(calendar_storage, market: str | None, start_date: str, end_date: str) -> list[str]:
+    if calendar_storage is None or market is None:
+        return []
+    loader = getattr(calendar_storage, "load_trading_dates", None)
+    if loader is None:
+        return []
+    try:
+        return loader(market, start_date, end_date)
+    except Exception:
+        return []
 
 
 def _mean(values: list[float]) -> float | None:
@@ -233,6 +264,7 @@ def _stable_experiment_id(
     strategy_name: str,
     strategy_version: str,
     benchmark_instrument_id: str | None,
+    market: str | None,
 ) -> str:
     payload = "|".join(
         [
@@ -245,6 +277,7 @@ def _stable_experiment_id(
             strategy_name,
             strategy_version,
             benchmark_instrument_id or "",
+            market or "",
         ]
     )
     return f"research-exp-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"

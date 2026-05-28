@@ -114,6 +114,7 @@ def evaluate_screen(
     default="weekly",
     show_default=True,
 )
+@click.option("--market", default=None, help="Market calendar to use for rebalance dates, e.g. CN or US")
 @click.option("--top-n", default=20, show_default=True, help="Top selected candidates per rebalance date")
 @click.option("--lookback-days", default=365, show_default=True, help="Stored bar lookback for factor calculation")
 @click.option("--interval", default="1d", show_default=True, help="Stored bar interval")
@@ -130,6 +131,7 @@ def rolling_screen(
     end_date: str,
     horizon_days: int,
     rebalance_frequency: str,
+    market: str | None,
     top_n: int,
     lookback_days: int,
     interval: str,
@@ -142,12 +144,14 @@ def rolling_screen(
     mysql_password: str,
 ):
     config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
+    market_reality_storage = MySQLMarketRealityStorage(config=config)
     result = run_rolling_screen_evaluation(
         universe_id=universe_id,
         start_date=start_date,
         end_date=end_date,
         horizon_days=horizon_days,
         rebalance_frequency=rebalance_frequency,
+        market=market,
         top_n=top_n,
         lookback_days=lookback_days,
         interval=interval,
@@ -160,7 +164,8 @@ def rolling_screen(
         factor_storage=MySQLFactorStorage(config=config),
         screening_storage=MySQLScreeningStorage(config=config),
         research_storage=MySQLResearchStorage(config=config),
-        market_reality_storage=MySQLMarketRealityStorage(config=config),
+        market_reality_storage=market_reality_storage,
+        calendar_storage=market_reality_storage,
     )
     summary = json.loads(result.experiment.summary_json)
     click.echo(

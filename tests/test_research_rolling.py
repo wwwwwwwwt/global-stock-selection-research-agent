@@ -23,6 +23,21 @@ def test_rebalance_dates_supports_daily_weekly_and_monthly():
     ]
 
 
+def test_rebalance_dates_use_stored_trading_calendar_when_available():
+    calendar_storage = FakeCalendarStorage(
+        ["2026-05-18", "2026-05-19", "2026-05-21", "2026-05-22", "2026-05-25", "2026-05-27"]
+    )
+
+    assert rebalance_dates(
+        "2026-05-18",
+        "2026-05-29",
+        "weekly",
+        calendar_storage=calendar_storage,
+        market="CN",
+    ) == ["2026-05-22", "2026-05-27"]
+    assert calendar_storage.calls == [("CN", "2026-05-18", "2026-05-29")]
+
+
 def test_run_rolling_screen_evaluation_persists_experiment_days():
     research_storage = FakeResearchStorage()
     calls = {"factor_dates": [], "screen_dates": [], "evaluation_dates": []}
@@ -161,3 +176,13 @@ class FakeResearchStorage:
     def upsert_research_experiment_days(self, days):
         self.days.extend(days)
         return len(days)
+
+
+class FakeCalendarStorage:
+    def __init__(self, dates):
+        self.dates = dates
+        self.calls = []
+
+    def load_trading_dates(self, market, start_date, end_date):
+        self.calls.append((market, start_date, end_date))
+        return self.dates

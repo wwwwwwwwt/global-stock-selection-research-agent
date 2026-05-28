@@ -120,25 +120,22 @@ def run_stored_bar_factor_pipeline(
     if max_symbols is not None:
         members = members[:max_symbols]
     start, end = _bar_load_range(as_of, lookback_days)
-    bars_by_instrument = {}
     errors = []
-
-    for member in members:
-        try:
-            bars = bar_storage.load_bars(
-                member.instrument_id,
-                interval,
-                start,
-                end,
-                source=source,
-                adjustment=adjustment,
-            )
-        except Exception as exc:
-            errors.append(f"{member.instrument_id}: {exc}")
-            continue
-        if bars.empty:
-            continue
-        bars_by_instrument[member.instrument_id] = _bars_up_to_as_of(bars, as_of)
+    loaded_bars = _load_stored_bars_for_members(
+        members,
+        bar_storage,
+        interval=interval,
+        start=start,
+        end=end,
+        source=source,
+        adjustment=adjustment,
+        errors=errors,
+    )
+    bars_by_instrument = {
+        instrument_id: _bars_up_to_as_of(bars, as_of)
+        for instrument_id, bars in loaded_bars.items()
+        if not bars.empty
+    }
 
     values = compute_universe_factors(
         members,
@@ -158,6 +155,53 @@ def run_stored_bar_factor_pipeline(
         factor_values_written=factor_values_written,
         errors=errors,
     )
+
+
+def _load_stored_bars_for_members(
+    members,
+    bar_storage,
+    *,
+    interval: str,
+    start: str,
+    end: str,
+    source: str | None,
+    adjustment: str | None,
+    errors: list[str],
+) -> dict[str, pd.DataFrame]:
+    instrument_ids = [member.instrument_id for member in members]
+    batch_loader = getattr(bar_storage, "load_bars_for_instruments", None)
+    if batch_loader is not None:
+        try:
+            return batch_loader(
+                instrument_ids,
+                interval,
+                start,
+                end,
+                source=source,
+                adjustment=adjustment,
+            )
+        except Exception as exc:
+            errors.append(f"batch_load: {exc}")
+            return {}
+
+    bars_by_instrument = {}
+    for member in members:
+        try:
+            bars = bar_storage.load_bars(
+                member.instrument_id,
+                interval,
+                start,
+                end,
+                source=source,
+                adjustment=adjustment,
+            )
+        except Exception as exc:
+            errors.append(f"{member.instrument_id}: {exc}")
+            continue
+        if bars.empty:
+            continue
+        bars_by_instrument[member.instrument_id] = bars
+    return bars_by_instrument
 
 
 def _bars_up_to_as_of(bars: pd.DataFrame, as_of: str) -> pd.DataFrame:

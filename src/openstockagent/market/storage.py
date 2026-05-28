@@ -282,6 +282,29 @@ class MySQLMarketRealityStorage:
             connection.close()
         return _calendar_day_from_row(row) if row is not None else None
 
+    def load_trading_dates(self, market: str, start_date: str, end_date: str) -> list[str]:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT calendar_date
+                       FROM trading_calendar
+                       WHERE market = %s
+                         AND calendar_date >= %s
+                         AND calendar_date <= %s
+                         AND is_trading_day = 1
+                       ORDER BY calendar_date ASC""",
+                    [market.upper(), start_date, end_date],
+                )
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+        dates = []
+        for row in rows:
+            value = row["calendar_date"] if isinstance(row, dict) else row[0]
+            dates.append(str(value))
+        return dates
+
     def next_trading_date(self, market: str, start_date: str, offset: int = 1) -> str | None:
         connection = self.connection_factory(self.config)
         try:

@@ -155,6 +155,44 @@ def test_stored_bar_factor_pipeline_loads_canonical_bars_and_writes_technical_fa
     ]
 
 
+def test_stored_bar_factor_pipeline_prefers_batch_bar_loading_when_available():
+    bar_storage = FakeBatchBarStorage()
+    bar_storage.upsert_bars(_stored_bars("EQUITY:CN:600519", close_offset=0.0))
+    bar_storage.upsert_bars(_stored_bars("EQUITY:CN:000001", close_offset=10.0))
+    universe_storage = FakeUniverseStorage(
+        [
+            UniverseMember("cn_sample", "EQUITY:CN:600519", "2024-01-01"),
+            UniverseMember("cn_sample", "EQUITY:CN:000001", "2024-01-01"),
+        ]
+    )
+    factor_storage = FakeFactorStorage()
+
+    result = run_stored_bar_factor_pipeline(
+        universe_id="cn_sample",
+        as_of="2024-04-05",
+        interval="1d",
+        lookback_days=120,
+        universe_storage=universe_storage,
+        bar_storage=bar_storage,
+        factor_storage=factor_storage,
+        source="tushare",
+    )
+
+    assert result.instruments_loaded == 2
+    assert result.factor_values_written == 18
+    assert bar_storage.batch_calls == [
+        (
+            ["EQUITY:CN:600519", "EQUITY:CN:000001"],
+            "1d",
+            "2023-12-07T00:00:00Z",
+            "2024-04-05T23:59:59Z",
+            "tushare",
+            "split_adjusted",
+        )
+    ]
+    assert bar_storage.load_calls == []
+
+
 class FakeUniverseStorage:
     def __init__(self, members):
         self.members = members
@@ -201,6 +239,31 @@ class FakeBarStorage:
                     & (frame["timestamp"] <= end)
                 ].copy()
         return pd.DataFrame()
+
+
+class FakeBatchBarStorage(FakeBarStorage):
+    def __init__(self):
+        super().__init__()
+        self.batch_calls = []
+
+    def load_bars_for_instruments(self, instrument_ids, interval, start, end, source=None, adjustment=None):
+        self.batch_calls.append((instrument_ids, interval, start, end, source, adjustment))
+        loaded = {}
+        for instrument_id in instrument_ids:
+            for frame in self.frames:
+                if frame.iloc[0]["instrument_id"] != instrument_id or frame.iloc[0]["interval"] != interval:
+                    continue
+                filtered = frame
+                if source is not None:
+                    filtered = filtered[filtered["source"] == source]
+                if adjustment is not None:
+                    filtered = filtered[filtered["adjustment"] == adjustment]
+                loaded[instrument_id] = filtered[
+                    (filtered["timestamp"] >= start)
+                    & (filtered["timestamp"] <= end)
+                ].copy()
+                break
+        return loaded
 
 
 class FakeFeed:
