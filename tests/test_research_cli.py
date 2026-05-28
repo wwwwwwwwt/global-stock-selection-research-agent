@@ -306,3 +306,116 @@ def test_research_rolling_screen_cli_runs_pipeline(monkeypatch):
     assert "Rolling screen evaluation complete" in result.output
     assert "experiment_id=research-exp-test" in result.output
     assert "hit_rate=0.750000" in result.output
+
+
+def test_research_rolling_entry_cli_runs_pipeline(monkeypatch):
+    from openstockagent.cli import stock_research
+    from openstockagent.research.models import ResearchExperimentDay, ResearchExperimentRun
+    from openstockagent.research.rolling import RollingEntryEvaluationResult
+
+    calls = {}
+
+    def fake_run_rolling_entry_evaluation(**kwargs):
+        calls.update(kwargs)
+        return RollingEntryEvaluationResult(
+            experiment=ResearchExperimentRun(
+                experiment_id="research-entry-exp-test",
+                universe_id=kwargs["universe_id"],
+                start_date=kwargs["start_date"],
+                end_date=kwargs["end_date"],
+                rebalance_frequency=kwargs["rebalance_frequency"],
+                horizon_days=5,
+                top_n=kwargs["top_n"],
+                strategy_name="rolling_entry_timing",
+                strategy_version="v1",
+                benchmark_instrument_id=None,
+                status="completed",
+                summary_json=json.dumps(
+                    {
+                        "dates_seen": 2,
+                        "screen_runs_created": 2,
+                        "recommendation_runs_created": 2,
+                        "entry_runs_created": 2,
+                        "backtest_runs_created": 2,
+                        "reviewed_count": 4,
+                        "skipped_count": 0,
+                        "triggered_rate": 0.5,
+                        "mean_realized_return": 0.04,
+                        "mean_entry_quality_score": 0.65,
+                        "mean_missed_opportunity": 0.02,
+                        "mean_avoided_chase_loss": -0.01,
+                    }
+                ),
+            ),
+            days=[
+                ResearchExperimentDay(
+                    experiment_id="research-entry-exp-test",
+                    as_of="2026-05-22",
+                    screen_run_id="screen-test",
+                    backtest_run_id="entry-backtest-test",
+                    market_context_snapshot_id=None,
+                    candidate_count=3,
+                    evaluated_count=2,
+                    mean_return=0.04,
+                    mean_excess_return=None,
+                    hit_rate=0.5,
+                    summary_json="{}",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(stock_research, "run_rolling_entry_evaluation", fake_run_rolling_entry_evaluation)
+    monkeypatch.setattr(stock_research, "MySQLUniverseStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLMarketDataStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLFactorStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLScreeningStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLRecommendationStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLEntryStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLResearchStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLMarketRealityStorage", lambda config: object())
+
+    result = CliRunner().invoke(
+        stock_research.main,
+        [
+            "rolling-entry",
+            "--universe",
+            "cn_core",
+            "--start-date",
+            "2026-05-18",
+            "--end-date",
+            "2026-05-29",
+            "--horizon",
+            "5d",
+            "--rebalance",
+            "weekly",
+            "--market",
+            "CN",
+            "--market-regime",
+            "neutral",
+            "--top-n",
+            "3",
+            "--lookback-days",
+            "180",
+            "--source",
+            "tushare",
+            "--max-dates",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["universe_id"] == "cn_core"
+    assert calls["start_date"] == "2026-05-18"
+    assert calls["end_date"] == "2026-05-29"
+    assert calls["horizon"] == "5d"
+    assert calls["rebalance_frequency"] == "weekly"
+    assert calls["market"] == "CN"
+    assert calls["market_regime"] == "neutral"
+    assert calls["top_n"] == 3
+    assert calls["lookback_days"] == 180
+    assert calls["source"] == "tushare"
+    assert calls["max_dates"] == 2
+    assert calls["calendar_storage"] is calls["market_reality_storage"]
+    assert "Rolling entry evaluation complete" in result.output
+    assert "experiment_id=research-entry-exp-test" in result.output
+    assert "triggered_rate=0.500000" in result.output
