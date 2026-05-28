@@ -57,3 +57,21 @@ class CorporateAction:
     def to_record(self) -> dict:
         return asdict(self)
 
+
+@dataclass(frozen=True)
+class MarketContextSnapshot:
+    snapshot_id: str
+    as_of: str
+    market: str
+    universe_id: str | None
+    risk_regime: str
+    regime_score: float | None = None
+    coverage: float | None = None
+    breadth_score: float | None = None
+    trend_score: float | None = None
+    volatility_score: float | None = None
+    liquidity_score: float | None = None
+    summary_json: str = "{}"
+
+    def to_record(self) -> dict:
+        return asdict(self)

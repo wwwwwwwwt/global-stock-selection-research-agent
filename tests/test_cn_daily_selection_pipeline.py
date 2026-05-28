@@ -100,6 +100,67 @@ def test_cn_daily_selection_pipeline_keeps_cash_when_only_watch_recommendations(
     assert result.portfolio.allocations == []
 
 
+def test_cn_daily_selection_pipeline_auto_market_regime_persists_snapshot_and_drives_decision():
+    universe_storage = FakeUniverseStorage(
+        [
+            UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01"),
+            UniverseMember("cn_core", "EQUITY:CN:600519", "2026-01-01"),
+        ]
+    )
+    market_reality_storage = FakeMarketRealityStorage()
+    factor_storage = FakeFactorStorage(
+        [
+            *_regime_factor_set("EQUITY:CN:000001", return_20d=0.08, return_60d=0.10, trend=0.8, slope=0.03),
+            *_regime_factor_set("EQUITY:CN:600519", return_20d=0.05, return_60d=0.07, trend=0.7, slope=0.02),
+        ]
+    )
+    screening_storage = FakeScreeningStorage(
+        preset_results=[
+            ScreenResult(
+                run_id="screen-ce51b9a266f3b376",
+                instrument_id="EQUITY:CN:000001",
+                rank=1,
+                selected=True,
+                total_score=0.80,
+                score_breakdown_json="{}",
+                reason_json="{}",
+                risk_json="{}",
+                evidence_refs_json="{}",
+            )
+        ]
+    )
+    recommendation_storage = FakeRecommendationStorage()
+    portfolio_storage = FakePortfolioStorage()
+
+    result = run_cn_daily_selection_pipeline(
+        universe_id="cn_core",
+        trade_date="2026-05-27",
+        reference_start="2026-05-20",
+        reference_feed=FakeTushareReferenceFeed(),
+        universe_storage=universe_storage,
+        market_data_storage=FakeMarketDataStorage(),
+        market_reality_storage=market_reality_storage,
+        factor_storage=factor_storage,
+        screening_storage=screening_storage,
+        recommendation_storage=recommendation_storage,
+        portfolio_storage=portfolio_storage,
+        top_n=1,
+        market_regime="auto",
+        capital=100000,
+        run_reference=False,
+        run_daily_sync=False,
+    )
+
+    assert result.market_context is not None
+    assert result.market_context.risk_regime == "risk_on"
+    assert market_reality_storage.market_context == result.market_context
+    assert screening_storage.run.market_context_snapshot_id == result.market_context.snapshot_id
+    assert recommendation_storage.run.market_regime == "risk_on"
+    assert result.portfolio is not None
+    assert result.portfolio.decision.market_regime == "risk_on"
+    assert result.portfolio.decision.action == "allocate"
+
+
 class FakeTushareReferenceFeed:
     def fetch_instruments(self, list_status):
         return (
@@ -270,17 +331,20 @@ class FakeMarketRealityStorage:
     def load_instrument_status(self, instrument_id, as_of):
         return self.statuses.get(instrument_id)
 
+    def upsert_market_context_snapshot(self, snapshot):
+        self.market_context = snapshot
+
 
 class FakeFactorStorage:
-    def __init__(self):
-        self.values = []
+    def __init__(self, values=None):
+        self.values = values or []
 
     def upsert_factor_definitions(self, definitions):
         self.definitions = definitions
         return len(definitions)
 
     def upsert_factor_values(self, values):
-        self.values = values
+        self.values.extend(values)
         return len(values)
 
     def load_factor_values(self, trade_date, interval):
@@ -348,3 +412,28 @@ class FakePortfolioStorage:
     def upsert_target_allocations(self, allocations):
         self.allocations = allocations
         return len(allocations)
+
+
+def _regime_factor_set(instrument_id, *, return_20d, return_60d, trend, slope):
+    return [
+        _factor(instrument_id, "return_20d", return_20d),
+        _factor(instrument_id, "return_60d", return_60d),
+        _factor(instrument_id, "ma_trend_score", trend),
+        _factor(instrument_id, "ma_slope_20d", slope),
+        _factor(instrument_id, "atr_14d", 0.03),
+        _factor(instrument_id, "max_drawdown_20d", -0.02),
+    ]
+
+
+def _factor(instrument_id, factor_name, value):
+    from openstockagent.factors.models import FactorValue
+
+    return FactorValue(
+        instrument_id=instrument_id,
+        trade_date="2026-05-27",
+        interval="1d",
+        factor_name=factor_name,
+        factor_value=value,
+        percentile=0.8,
+        evidence_json="{}",
+    )

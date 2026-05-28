@@ -200,8 +200,8 @@ def sync_cn_daily(
 @click.option("--horizon", type=click.Choice(["1d", "5d", "20d", "60d"]), default="5d", show_default=True)
 @click.option(
     "--market-regime",
-    type=click.Choice(["risk_on", "neutral", "risk_off", "high_risk", "data_bad", "unknown"]),
-    default="neutral",
+    type=click.Choice(["auto", "risk_on", "neutral", "risk_off", "high_risk", "data_bad", "unknown"]),
+    default="auto",
     show_default=True,
 )
 @click.option("--top-n", default=10, show_default=True, help="Selected screen and recommendation count")
@@ -296,6 +296,14 @@ def run_cn_selection(
             f"bars_written={result.daily.bars_written} "
             f"factor_values_written={result.daily.factor_values_written}"
         )
+    if result.market_context is not None:
+        click.echo(
+            "Market context: "
+            f"snapshot_id={result.market_context.snapshot_id} "
+            f"regime={result.market_context.risk_regime} "
+            f"score={_format_optional_float(result.market_context.regime_score)} "
+            f"coverage={_format_optional_float(result.market_context.coverage)}"
+        )
     selected = [screen_result for screen_result in result.screening.results if screen_result.selected]
     if selected:
         click.echo("Selected candidates:")
@@ -317,6 +325,10 @@ def _cn_feed_from_env():
     if token:
         return TushareAStockFeed(token=token)
     return AkShareAStockFeed()
+
+
+def _format_optional_float(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.6f}"
 
 
 if __name__ == "__main__":

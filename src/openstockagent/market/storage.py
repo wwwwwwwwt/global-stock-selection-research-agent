@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from openstockagent.database.mysql import MySQLConfig
-from openstockagent.market.models import CorporateAction, InstrumentStatus, TradingCalendarDay
+from openstockagent.market.models import CorporateAction, InstrumentStatus, MarketContextSnapshot, TradingCalendarDay
 
 
 TRADING_CALENDAR_DDL = """
@@ -62,6 +62,28 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 
+MARKET_CONTEXT_SNAPSHOTS_DDL = """
+CREATE TABLE IF NOT EXISTS market_context_snapshots (
+  snapshot_id VARCHAR(128) NOT NULL,
+  as_of DATE NOT NULL,
+  market VARCHAR(32) NOT NULL,
+  universe_id VARCHAR(64) NULL,
+  risk_regime VARCHAR(64) NOT NULL,
+  regime_score DOUBLE NULL,
+  coverage DOUBLE NULL,
+  breadth_score DOUBLE NULL,
+  trend_score DOUBLE NULL,
+  volatility_score DOUBLE NULL,
+  liquidity_score DOUBLE NULL,
+  summary_json JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (snapshot_id),
+  KEY idx_market_context_lookup (market, as_of, universe_id),
+  KEY idx_market_context_regime (as_of, risk_regime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
 
 class MySQLMarketRealityStorage:
     def __init__(
@@ -82,6 +104,7 @@ class MySQLMarketRealityStorage:
                 cursor.execute(TRADING_CALENDAR_DDL)
                 cursor.execute(INSTRUMENT_STATUS_DDL)
                 cursor.execute(CORPORATE_ACTIONS_DDL)
+                cursor.execute(MARKET_CONTEXT_SNAPSHOTS_DDL)
             connection.commit()
         finally:
             connection.close()
@@ -177,6 +200,55 @@ class MySQLMarketRealityStorage:
             connection.close()
         return len(records)
 
+    def upsert_market_context_snapshot(self, snapshot: MarketContextSnapshot) -> None:
+        record = snapshot.to_record()
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """INSERT INTO market_context_snapshots (
+                        snapshot_id, as_of, market, universe_id, risk_regime, regime_score,
+                        coverage, breadth_score, trend_score, volatility_score, liquidity_score, summary_json
+                    ) VALUES (
+                        %(snapshot_id)s, %(as_of)s, %(market)s, %(universe_id)s, %(risk_regime)s, %(regime_score)s,
+                        %(coverage)s, %(breadth_score)s, %(trend_score)s, %(volatility_score)s, %(liquidity_score)s,
+                        %(summary_json)s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        as_of = VALUES(as_of),
+                        market = VALUES(market),
+                        universe_id = VALUES(universe_id),
+                        risk_regime = VALUES(risk_regime),
+                        regime_score = VALUES(regime_score),
+                        coverage = VALUES(coverage),
+                        breadth_score = VALUES(breadth_score),
+                        trend_score = VALUES(trend_score),
+                        volatility_score = VALUES(volatility_score),
+                        liquidity_score = VALUES(liquidity_score),
+                        summary_json = VALUES(summary_json)""",
+                    record,
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def load_market_context_snapshot(self, snapshot_id: str) -> MarketContextSnapshot | None:
+        connection = self.connection_factory(self.config)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT snapshot_id, as_of, market, universe_id, risk_regime, regime_score,
+                              coverage, breadth_score, trend_score, volatility_score, liquidity_score,
+                              summary_json
+                       FROM market_context_snapshots
+                       WHERE snapshot_id = %s""",
+                    [snapshot_id],
+                )
+                row = cursor.fetchone()
+        finally:
+            connection.close()
+        return _snapshot_from_row(row) if row is not None else None
+
     def load_instrument_status(self, instrument_id: str, as_of: str) -> InstrumentStatus | None:
         connection = self.connection_factory(self.config)
         try:
@@ -267,3 +339,33 @@ def _status_from_row(row) -> InstrumentStatus:
         reason_json=values["reason_json"],
     )
 
+
+def _snapshot_from_row(row) -> MarketContextSnapshot:
+    values = row if isinstance(row, dict) else {
+        "snapshot_id": row[0],
+        "as_of": row[1],
+        "market": row[2],
+        "universe_id": row[3],
+        "risk_regime": row[4],
+        "regime_score": row[5],
+        "coverage": row[6],
+        "breadth_score": row[7],
+        "trend_score": row[8],
+        "volatility_score": row[9],
+        "liquidity_score": row[10],
+        "summary_json": row[11],
+    }
+    return MarketContextSnapshot(
+        snapshot_id=values["snapshot_id"],
+        as_of=str(values["as_of"]),
+        market=values["market"],
+        universe_id=values["universe_id"],
+        risk_regime=values["risk_regime"],
+        regime_score=None if values["regime_score"] is None else float(values["regime_score"]),
+        coverage=None if values["coverage"] is None else float(values["coverage"]),
+        breadth_score=None if values["breadth_score"] is None else float(values["breadth_score"]),
+        trend_score=None if values["trend_score"] is None else float(values["trend_score"]),
+        volatility_score=None if values["volatility_score"] is None else float(values["volatility_score"]),
+        liquidity_score=None if values["liquidity_score"] is None else float(values["liquidity_score"]),
+        summary_json=values["summary_json"],
+    )

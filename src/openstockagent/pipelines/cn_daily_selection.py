@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from openstockagent.market.models import MarketContextSnapshot
+from openstockagent.market.regime import build_market_context_snapshot
 from openstockagent.portfolio.decision import PortfolioDecisionResult, build_default_policy, build_portfolio_decision
 from openstockagent.portfolio.models import PortfolioAccount
 from openstockagent.recommendations.runner import RecommendationRunResult, run_recommendation_pipeline
@@ -21,6 +23,7 @@ class CNDailySelectionResult:
     daily: TushareDailyBatchSyncResult | None
     screening: ScreeningRunResult
     recommendation: RecommendationRunResult
+    market_context: MarketContextSnapshot | None = None
     portfolio: PortfolioDecisionResult | None = None
     messages: list[str] = field(default_factory=list)
 
@@ -39,7 +42,7 @@ def run_cn_daily_selection_pipeline(
     recommendation_storage,
     portfolio_storage=None,
     horizon: str = "5d",
-    market_regime: str = "neutral",
+    market_regime: str = "auto",
     top_n: int = 10,
     min_turnover: float = 0.0,
     min_bar_count: int = 0,
@@ -55,6 +58,9 @@ def run_cn_daily_selection_pipeline(
     reference_result = None
     daily_result = None
     messages = []
+    market_context = None
+    effective_market_regime = market_regime
+    market_context_snapshot_id = None
 
     if run_reference:
         reference_result = run_tushare_reference_sync(
@@ -81,6 +87,21 @@ def run_cn_daily_selection_pipeline(
     else:
         messages.append("daily_sync_skipped")
 
+    if market_regime == "auto":
+        market_context = build_market_context_snapshot(
+            universe_id=universe_id,
+            as_of=trade_date,
+            market="CN",
+            universe_storage=universe_storage,
+            factor_storage=factor_storage,
+        )
+        effective_market_regime = market_context.risk_regime
+        market_context_snapshot_id = market_context.snapshot_id
+        if hasattr(market_reality_storage, "upsert_market_context_snapshot"):
+            market_reality_storage.upsert_market_context_snapshot(market_context)
+        else:
+            messages.append("market_context_storage_skipped")
+
     strategy = build_default_strategy(
         hard_filters={
             "min_turnover_amount_20d": min_turnover,
@@ -97,6 +118,7 @@ def run_cn_daily_selection_pipeline(
         screening_storage=screening_storage,
         market_reality_storage=market_reality_storage,
         strategy=strategy,
+        market_context_snapshot_id=market_context_snapshot_id,
     )
 
     recommendation_result = run_recommendation_pipeline(
@@ -106,7 +128,7 @@ def run_cn_daily_selection_pipeline(
         horizon=horizon,
         screening_storage=screening_storage,
         recommendation_storage=recommendation_storage,
-        market_regime=market_regime,
+        market_regime=effective_market_regime,
         config={"max_items": top_n},
     )
 
@@ -121,7 +143,7 @@ def run_cn_daily_selection_pipeline(
             recommendation_run_id=recommendation_result.run_id,
             account_id=account_id,
             decision_date=trade_date,
-            market_regime=market_regime,
+            market_regime=effective_market_regime,
             capital=capital,
             policy=policy,
             recommendation_items=items,
@@ -139,6 +161,7 @@ def run_cn_daily_selection_pipeline(
         trade_date=trade_date,
         reference=reference_result,
         daily=daily_result,
+        market_context=market_context,
         screening=screening_result,
         recommendation=recommendation_result,
         portfolio=portfolio_result,

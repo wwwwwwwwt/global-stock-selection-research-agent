@@ -382,6 +382,7 @@ def test_stock_data_run_cn_selection_cli_runs_end_to_end_pipeline(monkeypatch):
     assert calls["reference_start"] == "2026-05-20"
     assert calls["max_symbols"] == 5
     assert calls["top_n"] == 5
+    assert calls["market_regime"] == "auto"
     assert calls["run_reference"] is True
     assert calls["run_daily_sync"] is True
     assert calls["run_portfolio"] is True
