@@ -150,8 +150,8 @@ def test_stored_bar_factor_pipeline_loads_canonical_bars_and_writes_technical_fa
     assert {value.factor_name for value in factor_storage.values} >= {"return_60d", "ma_trend_score", "atr_14d"}
     assert all(value.percentile is not None for value in factor_storage.values)
     assert bar_storage.load_calls == [
-        ("EQUITY:CN:600519", "1d", "2023-12-07T00:00:00Z", "2024-04-05T23:59:59Z"),
-        ("EQUITY:CN:000001", "1d", "2023-12-07T00:00:00Z", "2024-04-05T23:59:59Z"),
+        ("EQUITY:CN:600519", "1d", "2023-12-07T00:00:00Z", "2024-04-05T23:59:59Z", None, "split_adjusted"),
+        ("EQUITY:CN:000001", "1d", "2023-12-07T00:00:00Z", "2024-04-05T23:59:59Z", None, "split_adjusted"),
     ]
 
 
@@ -188,10 +188,14 @@ class FakeBarStorage:
         self.frames.append(bars.copy())
         return len(bars)
 
-    def load_bars(self, instrument_id, interval, start, end):
-        self.load_calls.append((instrument_id, interval, start, end))
+    def load_bars(self, instrument_id, interval, start, end, source=None, adjustment=None):
+        self.load_calls.append((instrument_id, interval, start, end, source, adjustment))
         for frame in self.frames:
             if frame.iloc[0]["instrument_id"] == instrument_id and frame.iloc[0]["interval"] == interval:
+                if source is not None:
+                    frame = frame[frame["source"] == source]
+                if adjustment is not None:
+                    frame = frame[frame["adjustment"] == adjustment]
                 return frame[
                     (frame["timestamp"] >= start)
                     & (frame["timestamp"] <= end)
@@ -242,7 +246,7 @@ def _stored_bars(instrument_id: str, close_offset: float) -> pd.DataFrame:
     frame["local_date"] = pd.to_datetime(frame["timestamp"], utc=True).dt.date
     frame["interval"] = "1d"
     frame["source"] = "tushare"
-    frame["adjustment"] = "raw"
+    frame["adjustment"] = "split_adjusted"
     frame["currency"] = "CNY"
     frame["is_complete"] = True
     frame["close"] = frame["close"] + close_offset

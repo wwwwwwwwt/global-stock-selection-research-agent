@@ -110,6 +110,8 @@ def run_stored_bar_factor_pipeline(
     universe_storage,
     bar_storage,
     factor_storage,
+    adjustment: str | None = "split_adjusted",
+    source: str | None = None,
     max_symbols: int | None = None,
 ) -> StoredBarFactorRunResult:
     if lookback_days <= 0:
@@ -123,7 +125,14 @@ def run_stored_bar_factor_pipeline(
 
     for member in members:
         try:
-            bars = bar_storage.load_bars(member.instrument_id, interval, start, end)
+            bars = bar_storage.load_bars(
+                member.instrument_id,
+                interval,
+                start,
+                end,
+                source=source,
+                adjustment=adjustment,
+            )
         except Exception as exc:
             errors.append(f"{member.instrument_id}: {exc}")
             continue

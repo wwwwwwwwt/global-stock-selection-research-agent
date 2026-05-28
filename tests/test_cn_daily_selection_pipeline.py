@@ -218,8 +218,8 @@ def test_cn_daily_selection_pipeline_computes_technical_factors_from_stored_bars
     assert result.market_context is not None
     assert result.market_context.risk_regime == "risk_on"
     assert market_data_storage.load_calls == [
-        ("EQUITY:CN:000001", "1d", "2025-11-28T00:00:00Z", "2026-05-27T23:59:59Z"),
-        ("EQUITY:CN:600519", "1d", "2025-11-28T00:00:00Z", "2026-05-27T23:59:59Z"),
+        ("EQUITY:CN:000001", "1d", "2025-11-28T00:00:00Z", "2026-05-27T23:59:59Z", None, "split_adjusted"),
+        ("EQUITY:CN:600519", "1d", "2025-11-28T00:00:00Z", "2026-05-27T23:59:59Z", None, "split_adjusted"),
     ]
 
 
@@ -381,10 +381,14 @@ class FakeMarketDataStorage:
     def seed_bars(self, frame):
         self.frames.append(frame.copy())
 
-    def load_bars(self, instrument_id, interval, start, end):
-        self.load_calls.append((instrument_id, interval, start, end))
+    def load_bars(self, instrument_id, interval, start, end, source=None, adjustment=None):
+        self.load_calls.append((instrument_id, interval, start, end, source, adjustment))
         for frame in self.frames:
             if frame.iloc[0]["instrument_id"] == instrument_id and frame.iloc[0]["interval"] == interval:
+                if source is not None:
+                    frame = frame[frame["source"] == source]
+                if adjustment is not None:
+                    frame = frame[frame["adjustment"] == adjustment]
                 return frame[(frame["timestamp"] >= start) & (frame["timestamp"] <= end)].copy()
         return pd.DataFrame()
 
@@ -527,7 +531,7 @@ def _stored_bars(instrument_id: str, close_offset: float) -> pd.DataFrame:
             "local_date": dates.strftime("%Y-%m-%d"),
             "interval": "1d",
             "source": "tushare",
-            "adjustment": "raw",
+            "adjustment": "split_adjusted",
             "open": close - 0.5,
             "high": close + 1.0,
             "low": close - 1.0,

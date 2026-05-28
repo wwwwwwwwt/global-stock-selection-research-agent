@@ -135,6 +135,32 @@ def test_mysql_market_storage_upserts_and_loads_canonical_bars():
     ]
 
 
+def test_mysql_market_storage_load_bars_can_filter_source_and_adjustment():
+    factory = FakeConnectionFactory(fetchall_rows=[[]])
+    storage = MySQLMarketDataStorage(config=MYSQL_CONFIG, connection_factory=factory)
+
+    storage.load_bars(
+        "EQUITY:CN:600519",
+        "1d",
+        "2023-01-01T00:00:00Z",
+        "2026-05-27T23:59:59Z",
+        source="tushare",
+        adjustment="split_adjusted",
+    )
+
+    executed_sql = factory.executed_sql[-1]
+    assert "AND source = %s" in executed_sql
+    assert "AND adjustment = %s" in executed_sql
+    assert factory.executed_params[-1] == [
+        "EQUITY:CN:600519",
+        "1d",
+        "2023-01-01T00:00:00Z",
+        "2026-05-27T23:59:59Z",
+        "tushare",
+        "split_adjusted",
+    ]
+
+
 def test_mysql_market_storage_saves_prediction_summary():
     factory = FakeConnectionFactory(
         fetchone_rows=[

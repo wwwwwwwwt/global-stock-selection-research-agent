@@ -372,23 +372,36 @@ class MySQLMarketDataStorage:
             connection.close()
         return len(records)
 
-    def load_bars(self, instrument_id: str, interval: str, start: str, end: str) -> pd.DataFrame:
+    def load_bars(
+        self,
+        instrument_id: str,
+        interval: str,
+        start: str,
+        end: str,
+        source: str | None = None,
+        adjustment: str | None = None,
+    ) -> pd.DataFrame:
+        sql = """SELECT instrument_id, bar_timestamp AS `timestamp`, local_date,
+                        bar_interval AS `interval`, source, adjustment,
+                        open, high, low, close, volume, amount, currency,
+                        is_complete, provider_payload_hash
+                 FROM bars
+                 WHERE instrument_id = %s
+                   AND bar_interval = %s
+                   AND bar_timestamp >= %s
+                   AND bar_timestamp <= %s"""
+        params: list[object] = [instrument_id, interval, start, end]
+        if source is not None:
+            sql += "\n                   AND source = %s"
+            params.append(source)
+        if adjustment is not None:
+            sql += "\n                   AND adjustment = %s"
+            params.append(adjustment)
+        sql += "\n                 ORDER BY bar_timestamp ASC"
         connection = self.connection_factory(self.config)
         try:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """SELECT instrument_id, bar_timestamp AS `timestamp`, local_date,
-                              bar_interval AS `interval`, source, adjustment,
-                              open, high, low, close, volume, amount, currency,
-                              is_complete, provider_payload_hash
-                       FROM bars
-                       WHERE instrument_id = %s
-                         AND bar_interval = %s
-                         AND bar_timestamp >= %s
-                         AND bar_timestamp <= %s
-                       ORDER BY bar_timestamp ASC""",
-                    [instrument_id, interval, start, end],
-                )
+                cursor.execute(sql, params)
                 rows = cursor.fetchall()
         finally:
             connection.close()
