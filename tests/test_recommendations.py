@@ -66,6 +66,35 @@ def test_run_recommendation_pipeline_persists_run_and_items():
     assert screening_storage.calls == [("screen-test", True)]
 
 
+def test_run_recommendation_pipeline_blocks_buy_candidates_when_market_regime_blocks_exposure():
+    screening_storage = FakeScreeningStorage(
+        [
+            _screen_result("EQUITY:CN:000001", rank=1, score=0.82),
+            _screen_result("EQUITY:CN:000002", rank=2, score=0.70),
+        ]
+    )
+    recommendation_storage = FakeRecommendationStorage()
+
+    result = run_recommendation_pipeline(
+        screen_run_id="screen-test",
+        universe_id="cn_core",
+        recommendation_date="2026-05-27",
+        horizon="5d",
+        screening_storage=screening_storage,
+        recommendation_storage=recommendation_storage,
+        market_regime="data_bad",
+        config={"max_items": 2},
+    )
+
+    assert result.status == "no_signal"
+    assert result.buy_candidate_count == 0
+    assert result.watch_count == 0
+    assert result.skip_count == 2
+    assert [item.action for item in recommendation_storage.items] == ["skip", "skip"]
+    risk_flags = [json.loads(item.risk_json)["flags"] for item in recommendation_storage.items]
+    assert risk_flags == [["market_regime_data_bad"], ["market_regime_data_bad"]]
+
+
 def test_horizon_strategy_presets_change_default_thresholds_and_versions():
     preset = horizon_strategy_preset("1d")
     items = build_recommendation_items("rec-run-test", "1d", [_screen_result("EQUITY:US:AAPL", rank=1, score=0.68)])

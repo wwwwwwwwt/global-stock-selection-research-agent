@@ -103,7 +103,7 @@ def run_recommendation_pipeline(
     review_due_date = review_due_date_for(recommendation_date, horizon)
     run_id = run_id or _stable_run_id(screen_run_id, recommendation_date, horizon, strategy_name, strategy_version)
     screen_results = screening_storage.load_screen_results(screen_run_id, selected_only=True)
-    items = build_recommendation_items(run_id, horizon, screen_results, config)
+    items = build_recommendation_items(run_id, horizon, screen_results, config, market_regime=market_regime)
     buy_count = sum(1 for item in items if item.action == "buy_candidate")
     watch_count = sum(1 for item in items if item.action == "watch")
     skip_count = sum(1 for item in items if item.action == "skip")
@@ -146,6 +146,7 @@ def build_recommendation_items(
     horizon: str,
     screen_results: list[ScreenResult],
     config: dict[str, Any] | None = None,
+    market_regime: str = "unknown",
 ) -> list[RecommendationItem]:
     config = _merge_config({**horizon_strategy_preset(horizon)["config"], **(config or {})})
     _horizon_days(horizon)
@@ -154,7 +155,8 @@ def build_recommendation_items(
     items = []
     for rank, screen_result in enumerate(ordered_results, start=1):
         action = _action_for_score(screen_result.total_score, config)
-        items.append(_item_from_screen_result(run_id, horizon, rank, screen_result, action, config))
+        action, market_flags = _apply_market_regime_gate(action, market_regime)
+        items.append(_item_from_screen_result(run_id, horizon, rank, screen_result, action, config, market_flags))
     return items
 
 
@@ -317,10 +319,13 @@ def _item_from_screen_result(
     screen_result: ScreenResult,
     action: str,
     config: dict[str, Any],
+    market_flags: list[str] | None = None,
 ) -> RecommendationItem:
     score_breakdown = _json_loads(screen_result.score_breakdown_json)
     reason = _json_loads(screen_result.reason_json)
     risk = _json_loads(screen_result.risk_json)
+    if market_flags:
+        risk["flags"] = [*risk.get("flags", []), *market_flags]
     evidence_refs = _json_loads(screen_result.evidence_refs_json)
     recommendation_id = _stable_item_id(run_id, screen_result.instrument_id)
     return RecommendationItem(
@@ -377,6 +382,12 @@ def _action_for_score(score: float, config: dict[str, Any]) -> str:
     if score >= float(config["watch_threshold"]):
         return "watch"
     return "skip"
+
+
+def _apply_market_regime_gate(action: str, market_regime: str) -> tuple[str, list[str]]:
+    if market_regime in {"data_bad", "high_risk"} and action != "skip":
+        return "skip", [f"market_regime_{market_regime}"]
+    return action, []
 
 
 def _expected_return(score: float, horizon: str, config: dict[str, Any]) -> float:
