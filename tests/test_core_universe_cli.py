@@ -363,6 +363,7 @@ def test_stock_data_run_cn_selection_cli_runs_end_to_end_pipeline(monkeypatch):
     monkeypatch.setattr(stock_data, "MySQLFactorStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "MySQLScreeningStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "MySQLRecommendationStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLEntryStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "MySQLPortfolioStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "run_cn_daily_selection_pipeline", fake_run)
 
@@ -392,6 +393,7 @@ def test_stock_data_run_cn_selection_cli_runs_end_to_end_pipeline(monkeypatch):
     assert calls["run_reference"] is True
     assert calls["run_daily_sync"] is True
     assert calls["run_technical_factors"] is True
+    assert calls["run_entry_plans"] is True
     assert calls["technical_lookback_days"] == 365
     assert calls["run_portfolio"] is True
     assert calls["allow_watch_allocation"] is False
@@ -430,6 +432,7 @@ def test_stock_data_run_cn_selection_cli_can_skip_stored_technical_factors(monke
     monkeypatch.setattr(stock_data, "MySQLFactorStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "MySQLScreeningStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "MySQLRecommendationStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLEntryStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "run_cn_daily_selection_pipeline", fake_run)
 
     result = CliRunner().invoke(
@@ -447,6 +450,7 @@ def test_stock_data_run_cn_selection_cli_can_skip_stored_technical_factors(monke
 
     assert result.exit_code == 0
     assert calls["run_technical_factors"] is False
+    assert calls["run_entry_plans"] is True
     assert calls["technical_lookback_days"] == 180
 
 
@@ -480,6 +484,7 @@ def test_stock_data_run_cn_selection_cli_can_enable_watch_allocation(monkeypatch
     monkeypatch.setattr(stock_data, "MySQLFactorStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "MySQLScreeningStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "MySQLRecommendationStorage", lambda config: object())
+    monkeypatch.setattr(stock_data, "MySQLEntryStorage", lambda config: object())
     monkeypatch.setattr(stock_data, "run_cn_daily_selection_pipeline", fake_run)
 
     result = CliRunner().invoke(

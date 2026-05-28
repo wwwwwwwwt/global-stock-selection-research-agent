@@ -96,6 +96,25 @@ def test_portfolio_decision_can_allocate_watch_items_when_policy_allows_it():
     assert result.allocations[0].target_weight == 0.1
 
 
+def test_portfolio_decision_can_link_allocations_to_ready_entry_plans():
+    policy = build_default_policy()
+
+    result = build_portfolio_decision(
+        recommendation_run_id="rec-run-test",
+        account_id="paper",
+        decision_date="2026-05-25",
+        market_regime="neutral",
+        capital=100_000,
+        policy=policy,
+        recommendation_items=[_item("rec-a", "EQUITY:US:AAPL", confidence=0.95, score=0.9)],
+        entry_plan_ids_by_recommendation_id={"rec-a": "entry-plan-a"},
+    )
+
+    assert result.decision.action == "allocate"
+    assert result.allocations[0].source_entry_plan_id == "entry-plan-a"
+    assert json.loads(result.allocations[0].reason_json)["source_entry_plan_id"] == "entry-plan-a"
+
+
 def test_mysql_portfolio_storage_creates_and_upserts_records():
     factory = FakeConnectionFactory()
     storage = MySQLPortfolioStorage(

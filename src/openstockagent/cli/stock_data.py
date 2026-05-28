@@ -11,6 +11,7 @@ from openstockagent.data.storage import MySQLMarketDataStorage
 from openstockagent.data.sync import build_sync_plan, run_data_sync_plan
 from openstockagent.data.sync_storage import MySQLDataSyncStorage
 from openstockagent.database.mysql import MySQLConfig
+from openstockagent.entry.storage import MySQLEntryStorage
 from openstockagent.factors.storage import MySQLFactorStorage
 from openstockagent.market.storage import MySQLMarketRealityStorage
 from openstockagent.pipelines.cn_daily_selection import run_cn_daily_selection_pipeline
@@ -211,6 +212,7 @@ def sync_cn_daily(
 @click.option("--skip-reference", is_flag=True, help="Skip Tushare reference/status sync")
 @click.option("--skip-daily-sync", is_flag=True, help="Skip Tushare daily/daily_basic sync")
 @click.option("--skip-technical-factors", is_flag=True, help="Skip technical factor calculation from stored bars")
+@click.option("--skip-entry-plans", is_flag=True, help="Skip entry timing plan generation")
 @click.option("--technical-lookback-days", default=365, show_default=True, help="Stored bar lookback for technical factors")
 @click.option("--skip-portfolio", is_flag=True, help="Skip portfolio decision creation")
 @click.option("--allow-watch-allocation", is_flag=True, help="Allow watch recommendations to receive target allocations")
@@ -233,6 +235,7 @@ def run_cn_selection(
     skip_reference: bool,
     skip_daily_sync: bool,
     skip_technical_factors: bool,
+    skip_entry_plans: bool,
     technical_lookback_days: int,
     skip_portfolio: bool,
     allow_watch_allocation: bool,
@@ -260,6 +263,7 @@ def run_cn_selection(
         factor_storage=MySQLFactorStorage(config=config),
         screening_storage=MySQLScreeningStorage(config=config),
         recommendation_storage=MySQLRecommendationStorage(config=config),
+        entry_storage=None if skip_entry_plans else MySQLEntryStorage(config=config),
         portfolio_storage=None if skip_portfolio else MySQLPortfolioStorage(config=config),
         horizon=horizon,
         market_regime=market_regime,
@@ -270,6 +274,7 @@ def run_cn_selection(
         run_reference=not skip_reference,
         run_daily_sync=not skip_daily_sync,
         run_technical_factors=not skip_technical_factors,
+        run_entry_plans=not skip_entry_plans,
         technical_lookback_days=technical_lookback_days,
         run_portfolio=not skip_portfolio,
         account_id=account_id,
@@ -316,6 +321,15 @@ def run_cn_selection(
             f"regime={result.market_context.risk_regime} "
             f"score={_format_optional_float(result.market_context.regime_score)} "
             f"coverage={_format_optional_float(result.market_context.coverage)}"
+        )
+    if result.entry is not None:
+        click.echo(
+            "Entry plans: "
+            f"run_id={result.entry.run.run_id} "
+            f"ready_count={sum(1 for plan in result.entry.plans if plan.entry_status == 'ready')} "
+            f"wait_count={sum(1 for plan in result.entry.plans if plan.entry_status == 'wait')} "
+            f"avoid_count={sum(1 for plan in result.entry.plans if plan.entry_status == 'avoid')} "
+            f"invalid_count={sum(1 for plan in result.entry.plans if plan.entry_status == 'invalid')}"
         )
     selected = [screen_result for screen_result in result.screening.results if screen_result.selected]
     if selected:

@@ -61,6 +61,7 @@ def build_portfolio_decision(
     capital: float,
     policy: PortfolioPolicy,
     recommendation_items: list[RecommendationItem],
+    entry_plan_ids_by_recommendation_id: dict[str, str] | None = None,
     decision_id: str | None = None,
 ) -> PortfolioDecisionResult:
     if capital <= 0:
@@ -70,6 +71,7 @@ def build_portfolio_decision(
     target_gross = min(policy.max_gross_exposure, max(0.0, regime_cap))
     target_gross = min(target_gross, max(0.0, 1.0 - policy.cash_floor_pct))
     actionable = _actionable_items(recommendation_items, policy)
+    entry_plan_ids_by_recommendation_id = entry_plan_ids_by_recommendation_id or {}
 
     if target_gross <= 0:
         action = "empty"
@@ -96,10 +98,14 @@ def build_portfolio_decision(
                         "source_screen_score": item.source_screen_score,
                         "confidence": item.confidence,
                         "expected_return": item.expected_return,
+                        "source_entry_plan_id": entry_plan_ids_by_recommendation_id.get(
+                            item.recommendation_id
+                        ),
                     },
                     sort_keys=True,
                 ),
                 risk_json=item.risk_json,
+                source_entry_plan_id=entry_plan_ids_by_recommendation_id.get(item.recommendation_id),
             )
             for item in selected
         ]

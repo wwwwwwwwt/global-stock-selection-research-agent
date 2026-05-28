@@ -52,6 +52,59 @@ def test_cn_daily_selection_pipeline_runs_data_screen_recommendation_and_portfol
     assert portfolio_storage.allocations
 
 
+def test_cn_daily_selection_pipeline_runs_entry_plans_before_portfolio_allocation():
+    universe_storage = FakeUniverseStorage([UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01")])
+    market_data_storage = FakeMarketDataStorage()
+    market_data_storage.seed_bars(_breakout_bars("EQUITY:CN:000001"))
+    market_reality_storage = FakeMarketRealityStorage()
+    screening_storage = FakeScreeningStorage(
+        preset_results=[
+            ScreenResult(
+                run_id="screen-ce51b9a266f3b376",
+                instrument_id="EQUITY:CN:000001",
+                rank=1,
+                selected=True,
+                total_score=0.90,
+                score_breakdown_json="{}",
+                reason_json="{}",
+                risk_json="{}",
+                evidence_refs_json="{}",
+            )
+        ]
+    )
+    recommendation_storage = FakeRecommendationStorage()
+    entry_storage = FakeEntryStorage()
+    portfolio_storage = FakePortfolioStorage()
+
+    result = run_cn_daily_selection_pipeline(
+        universe_id="cn_core",
+        trade_date="2026-05-27",
+        reference_start="2026-05-20",
+        reference_feed=FakeTushareReferenceFeed(),
+        universe_storage=universe_storage,
+        market_data_storage=market_data_storage,
+        market_reality_storage=market_reality_storage,
+        factor_storage=FakeFactorStorage(),
+        screening_storage=screening_storage,
+        recommendation_storage=recommendation_storage,
+        entry_storage=entry_storage,
+        portfolio_storage=portfolio_storage,
+        top_n=1,
+        market_regime="neutral",
+        capital=100000,
+        run_reference=False,
+        run_daily_sync=False,
+        run_technical_factors=False,
+    )
+
+    assert result.entry is not None
+    assert result.entry.plans[0].entry_status == "ready"
+    assert entry_storage.run == result.entry.run
+    assert result.portfolio is not None
+    assert result.portfolio.decision.action == "allocate"
+    assert result.portfolio.allocations[0].source_entry_plan_id == result.entry.plans[0].plan_id
+
+
 def test_cn_daily_selection_pipeline_keeps_cash_when_only_watch_recommendations():
     universe_storage = FakeUniverseStorage([UniverseMember("cn_core", "EQUITY:CN:000001", "2026-01-01")])
     market_data_storage = FakeMarketDataStorage()
@@ -562,6 +615,19 @@ class FakePortfolioStorage:
         return len(allocations)
 
 
+class FakeEntryStorage:
+    def upsert_entry_plan_run(self, run):
+        self.run = run
+
+    def delete_entry_plans(self, run_id):
+        self.deleted_run_id = run_id
+        return 0
+
+    def upsert_entry_plans(self, plans):
+        self.plans = plans
+        return len(plans)
+
+
 def _regime_factor_set(instrument_id, *, return_20d, return_60d, trend, slope):
     return [
         _factor(instrument_id, "return_20d", return_20d),
@@ -605,6 +671,29 @@ def _stored_bars(instrument_id: str, close_offset: float) -> pd.DataFrame:
             "close": close,
             "volume": volume,
             "amount": close * volume,
+            "currency": "CNY",
+            "is_complete": True,
+        }
+    )
+
+
+def _breakout_bars(instrument_id: str) -> pd.DataFrame:
+    dates = pd.bdate_range("2026-03-05", periods=60)
+    close = pd.Series([100.0 + index for index in range(60)])
+    return pd.DataFrame(
+        {
+            "instrument_id": instrument_id,
+            "timestamp": dates.strftime("%Y-%m-%d"),
+            "local_date": dates.strftime("%Y-%m-%d"),
+            "interval": "1d",
+            "source": "tushare",
+            "adjustment": "split_adjusted",
+            "open": close - 0.5,
+            "high": close + 0.1,
+            "low": close - 1.0,
+            "close": close,
+            "volume": 1000.0,
+            "amount": close * 1000.0,
             "currency": "CNY",
             "is_complete": True,
         }

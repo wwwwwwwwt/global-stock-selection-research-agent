@@ -78,6 +78,7 @@ class TargetAllocation:
     source_recommendation_id: str | None
     reason_json: str
     risk_json: str
+    source_entry_plan_id: str | None = None
 
     def to_record(self) -> dict:
         return asdict(self)

@@ -4,6 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from openstockagent.data.readiness import DataReadinessCheck, check_selection_data_readiness
+from openstockagent.entry.models import EntryPlanRunResult
+from openstockagent.entry.runner import run_entry_plan_pipeline
+from openstockagent.entry.rules import ready_plan_ids_by_recommendation
 from openstockagent.market.models import MarketContextSnapshot
 from openstockagent.market.regime import build_market_context_snapshot
 from openstockagent.portfolio.decision import PortfolioDecisionResult, build_default_policy, build_portfolio_decision
@@ -25,6 +28,7 @@ class CNDailySelectionResult:
     daily: TushareDailyBatchSyncResult | None
     screening: ScreeningRunResult
     recommendation: RecommendationRunResult
+    entry: EntryPlanRunResult | None = None
     technical: StoredBarFactorRunResult | None = None
     data_readiness: DataReadinessCheck | None = None
     market_context: MarketContextSnapshot | None = None
@@ -44,6 +48,7 @@ def run_cn_daily_selection_pipeline(
     factor_storage,
     screening_storage,
     recommendation_storage,
+    entry_storage=None,
     portfolio_storage=None,
     horizon: str = "5d",
     market_regime: str = "auto",
@@ -54,6 +59,7 @@ def run_cn_daily_selection_pipeline(
     run_reference: bool = True,
     run_daily_sync: bool = True,
     run_technical_factors: bool = True,
+    run_entry_plans: bool = True,
     technical_lookback_days: int = 365,
     run_portfolio: bool = True,
     account_id: str = "paper-cn",
@@ -170,6 +176,28 @@ def run_cn_daily_selection_pipeline(
         config={"max_items": top_n},
     )
 
+    entry_result = None
+    entry_plan_ids_by_recommendation_id = {}
+    if run_entry_plans:
+        if entry_storage is None:
+            messages.append("entry_plan_skipped")
+        else:
+            entry_result = run_entry_plan_pipeline(
+                recommendation_run_id=recommendation_result.run_id,
+                as_of=trade_date,
+                horizon=horizon,
+                market_regime=effective_market_regime,
+                recommendation_storage=recommendation_storage,
+                bar_storage=market_data_storage,
+                entry_storage=entry_storage,
+                market_reality_storage=market_reality_storage,
+                source="tushare",
+                adjustment="split_adjusted",
+            )
+            entry_plan_ids_by_recommendation_id = ready_plan_ids_by_recommendation(entry_result.plans)
+    else:
+        messages.append("entry_plan_skipped")
+
     portfolio_result = None
     if run_portfolio:
         if portfolio_storage is None:
@@ -177,6 +205,8 @@ def run_cn_daily_selection_pipeline(
         policy = build_default_policy(allow_watch_allocation=allow_watch_allocation)
         account = PortfolioAccount(account_id=account_id, base_currency=base_currency, capital=capital)
         items = recommendation_storage.load_recommendation_items(recommendation_result.run_id, actionable_only=True)
+        if entry_result is not None:
+            items = [item for item in items if item.recommendation_id in entry_plan_ids_by_recommendation_id]
         portfolio_result = build_portfolio_decision(
             recommendation_run_id=recommendation_result.run_id,
             account_id=account_id,
@@ -185,6 +215,7 @@ def run_cn_daily_selection_pipeline(
             capital=capital,
             policy=policy,
             recommendation_items=items,
+            entry_plan_ids_by_recommendation_id=entry_plan_ids_by_recommendation_id,
         )
         portfolio_storage.upsert_account(account)
         portfolio_storage.upsert_policy(policy)
@@ -200,6 +231,7 @@ def run_cn_daily_selection_pipeline(
         reference=reference_result,
         daily=daily_result,
         technical=technical_result,
+        entry=entry_result,
         market_context=market_context,
         screening=screening_result,
         recommendation=recommendation_result,

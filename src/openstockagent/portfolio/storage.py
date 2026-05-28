@@ -87,12 +87,14 @@ CREATE TABLE IF NOT EXISTS target_allocations (
   target_weight DOUBLE NOT NULL,
   max_position_value DOUBLE NOT NULL,
   source_recommendation_id VARCHAR(128) NULL,
+  source_entry_plan_id VARCHAR(128) NULL,
   reason_json JSON NOT NULL,
   risk_json JSON NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (decision_id, instrument_id),
-  KEY idx_target_allocations_action (decision_id, action)
+  KEY idx_target_allocations_action (decision_id, action),
+  KEY idx_target_allocations_entry_plan (source_entry_plan_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 
@@ -118,6 +120,7 @@ class MySQLPortfolioStorage:
                 cursor.execute(PORTFOLIO_POSITIONS_DDL)
                 cursor.execute(PORTFOLIO_DECISIONS_DDL)
                 cursor.execute(TARGET_ALLOCATIONS_DDL)
+                _ensure_target_allocations_entry_plan_column(cursor)
             connection.commit()
         finally:
             connection.close()
@@ -227,16 +230,17 @@ class MySQLPortfolioStorage:
             self,
             """INSERT INTO target_allocations (
                 decision_id, instrument_id, action, target_weight, max_position_value,
-                source_recommendation_id, reason_json, risk_json
+                source_recommendation_id, source_entry_plan_id, reason_json, risk_json
             ) VALUES (
                 %(decision_id)s, %(instrument_id)s, %(action)s, %(target_weight)s, %(max_position_value)s,
-                %(source_recommendation_id)s, %(reason_json)s, %(risk_json)s
+                %(source_recommendation_id)s, %(source_entry_plan_id)s, %(reason_json)s, %(risk_json)s
             )
             ON DUPLICATE KEY UPDATE
                 action = VALUES(action),
                 target_weight = VALUES(target_weight),
                 max_position_value = VALUES(max_position_value),
                 source_recommendation_id = VALUES(source_recommendation_id),
+                source_entry_plan_id = VALUES(source_entry_plan_id),
                 reason_json = VALUES(reason_json),
                 risk_json = VALUES(risk_json)""",
             records,
@@ -264,9 +268,18 @@ def _execute_many(storage: MySQLPortfolioStorage, sql: str, records: list[dict])
         connection.close()
 
 
+def _ensure_target_allocations_entry_plan_column(cursor) -> None:
+    try:
+        cursor.execute("ALTER TABLE target_allocations ADD COLUMN source_entry_plan_id VARCHAR(128) NULL")
+        cursor.execute("ALTER TABLE target_allocations ADD KEY idx_target_allocations_entry_plan (source_entry_plan_id)")
+    except Exception as exc:
+        message = str(exc).lower()
+        if "duplicate column" not in message and "duplicate key" not in message:
+            raise
+
+
 def _connect(config: MySQLConfig):
     import pymysql
     from pymysql.cursors import DictCursor
 
     return pymysql.connect(**config.to_connection_kwargs(), cursorclass=DictCursor)
-

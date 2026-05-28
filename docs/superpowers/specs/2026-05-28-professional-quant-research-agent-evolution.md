@@ -17,6 +17,7 @@
 -> 市场现实 calendar/status/actions
 -> 筛选排名 screen_runs/results
 -> 分周期推荐 recommendation_runs/items
+-> 买点/执行准备 entry_plan_runs/entry_plans
 -> 仓位决策 portfolio_decisions/target_allocations
 -> 研究复盘 backtest_runs/results
 ```
@@ -297,7 +298,49 @@ kronos_score          5%
 - `expected_return` 和 `expected_risk` 还是基于分数的启发式估计，不是历史统计校准。
 - review 逻辑有了，但还没有形成完整滚动研究评估体系。
 
-### 2.9 组合/仓位层
+### 2.9 买点/Entry Timing 层
+
+新增定位：
+
+- `src/openstockagent/entry/models.py`
+- `src/openstockagent/entry/rules.py`
+- `src/openstockagent/entry/storage.py`
+- `src/openstockagent/entry/runner.py`
+- `src/openstockagent/cli/run_entry.py`
+
+这一层放在“分周期推荐”和“组合仓位”之间，专门回答：
+
+- 现在是否值得买。
+- 是突破买、回踩买、等待确认，还是避免追高。
+- 触发价、回踩价、止损、止盈、时间失效日是多少。
+- 这只股票是 `ready`、`wait`、`avoid` 还是 `invalid`。
+
+它不负责选股，也不负责决定仓位。筛选层负责“哪些股票值得研究”，推荐层负责“哪个周期值得关注”，买点层负责“此刻是否具备可执行价格结构”，组合层负责“买多少或是否空仓”。
+
+第一版采用日线规则：
+
+```text
+recommendation_items + bars + instrument_status + market_regime
+-> entry_plans
+-> portfolio only allocates entry_status=ready
+```
+
+判断：这是把“高点买、低点买、追不追、等不等”放进架构的正确位置。它会让系统从“Top 10 推荐器”变成“候选 + 买点 + 仓位”的决策链。
+
+当前短板：
+
+- 只用日 K，不含分钟级触发。
+- 买点规则还是确定性 v1，尚未经过滚动复盘校准。
+- 尚未接入筹码、盘口、资金流和行业拥挤度。
+- 还没有根据持仓成本做加仓/减仓买点。
+
+下一步：
+
+- 用 `entry_plan_reviews` 统计 ready/wait/avoid 的真实效果。
+- 校准追高阈值、回踩阈值、止损止盈参数。
+- 把单股分析延后接入为解释层，不改变买点层职责。
+
+### 2.10 组合/仓位层
 
 相关代码：
 
@@ -336,7 +379,7 @@ unknown   -> 30%
 - 没有 reduce/sell/hold/rebalance 逻辑。
 - 没有根据复盘结果调整仓位规则。
 
-### 2.10 研究复盘层
+### 2.11 研究复盘层
 
 相关代码：
 

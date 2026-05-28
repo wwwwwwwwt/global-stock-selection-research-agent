@@ -2,6 +2,7 @@
 import click
 
 from openstockagent.database.mysql import MySQLConfig
+from openstockagent.entry.storage import MySQLEntryStorage
 from openstockagent.portfolio.decision import build_default_policy, build_portfolio_decision
 from openstockagent.portfolio.models import PortfolioAccount
 from openstockagent.portfolio.storage import MySQLPortfolioStorage
@@ -34,6 +35,7 @@ def main():
 @click.option("--min-confidence", default=0.55, show_default=True)
 @click.option("--min-expected-return", default=0.0, show_default=True)
 @click.option("--allow-watch-allocation", is_flag=True, help="Allow watch items to receive target allocations")
+@click.option("--entry-run-id", default=None, help="Only allocate recommendations with ready entry plans from this run")
 @click.option("--mysql-url", default="jdbc:mysql://127.0.0.1:13306/openstockagent", help="MySQL JDBC URL")
 @click.option("--mysql-user", default="root", help="MySQL username")
 @click.option("--mysql-password", default="123456", help="MySQL password")
@@ -53,6 +55,7 @@ def decide(
     min_confidence: float,
     min_expected_return: float,
     allow_watch_allocation: bool,
+    entry_run_id: str | None,
     mysql_url: str,
     mysql_user: str,
     mysql_password: str,
@@ -73,6 +76,13 @@ def decide(
     )
     account = PortfolioAccount(account_id=account_id, base_currency=base_currency, capital=capital)
     items = recommendation_storage.load_recommendation_items(recommendation_run_id, actionable_only=True)
+    entry_plan_ids_by_recommendation_id = {}
+    if entry_run_id is not None:
+        entry_plans = MySQLEntryStorage(config=config).load_entry_plans(entry_run_id, ready_only=True)
+        entry_plan_ids_by_recommendation_id = {
+            plan.recommendation_id: plan.plan_id for plan in entry_plans
+        }
+        items = [item for item in items if item.recommendation_id in entry_plan_ids_by_recommendation_id]
     result = build_portfolio_decision(
         recommendation_run_id=recommendation_run_id,
         account_id=account_id,
@@ -81,6 +91,7 @@ def decide(
         capital=capital,
         policy=policy,
         recommendation_items=items,
+        entry_plan_ids_by_recommendation_id=entry_plan_ids_by_recommendation_id,
     )
     portfolio_storage.upsert_account(account)
     portfolio_storage.upsert_policy(policy)
@@ -97,6 +108,7 @@ def decide(
         f"target_gross_exposure={result.decision.target_gross_exposure:.6f} "
         f"cash_pct={result.decision.cash_pct:.6f} "
         f"allocations={len(result.allocations)}"
+        + (f" entry_run_id={entry_run_id}" if entry_run_id is not None else "")
     )
     for allocation in result.allocations:
         click.echo(
