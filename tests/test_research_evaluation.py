@@ -3,7 +3,8 @@ import json
 import pandas as pd
 
 from openstockagent.database.mysql import MySQLConfig
-from openstockagent.research.evaluation import evaluate_screen_run
+from openstockagent.entry.models import EntryPlan, EntryPlanRun
+from openstockagent.research.evaluation import evaluate_entry_plan_run, evaluate_screen_run
 from openstockagent.research.models import BacktestResult, BacktestRun, ResearchExperimentDay, ResearchExperimentRun
 from openstockagent.research.storage import MySQLResearchStorage
 from openstockagent.screening.models import ScreenResult
@@ -76,6 +77,51 @@ def test_evaluate_screen_run_records_no_data_when_forward_bars_are_missing():
     assert summary["evaluated_count"] == 0
     assert summary["skipped_count"] == 1
     assert result.errors == ["EQUITY:CN:000001: insufficient_forward_bars"]
+
+
+def test_evaluate_entry_plan_run_reviews_plans_and_summarizes_entry_quality():
+    ready_plan = _entry_plan("entry-plan-ready", "EQUITY:CN:000001", "rec-ready", "breakout_buy", "ready")
+    avoid_plan = _entry_plan("entry-plan-avoid", "EQUITY:CN:000002", "rec-avoid", "avoid_chase", "avoid")
+    entry_storage = FakeEntryStorage([ready_plan, avoid_plan])
+    bar_storage = FakeBarStorage(
+        {
+            "EQUITY:CN:000001": _entry_bars(
+                ["2026-05-27", "2026-05-28", "2026-05-29", "2026-06-03"],
+                [10.0, 10.8, 11.2, 11.5],
+                [10.2, 10.9, 11.3, 11.6],
+                [9.8, 10.4, 10.9, 11.1],
+            ),
+            "EQUITY:CN:000002": _entry_bars(
+                ["2026-05-27", "2026-05-28", "2026-05-29", "2026-06-03"],
+                [20.0, 19.0, 18.8, 18.0],
+                [20.2, 19.2, 19.0, 18.2],
+                [19.8, 18.8, 18.5, 17.8],
+            ),
+        }
+    )
+    research_storage = FakeEvaluationStorage()
+
+    result = evaluate_entry_plan_run(
+        entry_run_id="entry-run-test",
+        entry_storage=entry_storage,
+        bar_storage=bar_storage,
+        research_storage=research_storage,
+        run_id="entry-backtest-test",
+    )
+
+    summary = json.loads(result.run.summary_json)
+    assert result.run.source_type == "entry"
+    assert result.run.source_run_id == "entry-run-test"
+    assert result.run.horizon_days == 5
+    assert result.run.top_n == 2
+    assert summary["plans_seen"] == 2
+    assert summary["reviewed_count"] == 2
+    assert summary["triggered_rate"] == 0.5
+    assert summary["by_status"]["ready"]["count"] == 1
+    assert summary["by_status"]["avoid"]["count"] == 1
+    assert summary["mean_entry_quality_score"] is not None
+    assert entry_storage.reviews == result.reviews
+    assert research_storage.runs == [result.run]
 
 
 def test_mysql_research_storage_creates_upserts_deletes_and_loads_results():
@@ -212,6 +258,42 @@ def _bars(dates: list[str], closes: list[float]) -> pd.DataFrame:
     )
 
 
+def _entry_bars(dates: list[str], closes: list[float], highs: list[float], lows: list[float]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "timestamp": [f"{date}T00:00:00Z" for date in dates],
+            "local_date": dates,
+            "close": closes,
+            "high": highs,
+            "low": lows,
+        }
+    )
+
+
+def _entry_plan(plan_id: str, instrument_id: str, recommendation_id: str, mode: str, status: str) -> EntryPlan:
+    return EntryPlan(
+        plan_id=plan_id,
+        run_id="entry-run-test",
+        recommendation_id=recommendation_id,
+        instrument_id=instrument_id,
+        rank=1,
+        entry_mode=mode,
+        entry_status=status,
+        reference_price=10.0 if instrument_id.endswith("000001") else 20.0,
+        trigger_price=10.5 if status == "ready" else None,
+        pullback_price=None,
+        stop_loss=9.5,
+        take_profit=11.5,
+        time_limit_date="2026-06-03",
+        confidence=0.8,
+        reason_json="{}",
+        confirmation_json="{}",
+        invalidation_json="{}",
+        risk_json="{}",
+        evidence_refs_json="{}",
+    )
+
+
 class FakeScreeningStorage:
     def __init__(self, results):
         self.results = results
@@ -248,6 +330,36 @@ class FakeEvaluationStorage:
     def upsert_backtest_results(self, results):
         self.results.extend(results)
         return len(results)
+
+
+class FakeEntryStorage:
+    def __init__(self, plans):
+        self.run = EntryPlanRun(
+            run_id="entry-run-test",
+            recommendation_run_id="rec-run-test",
+            as_of="2026-05-27",
+            horizon="5d",
+            market_regime="neutral",
+            strategy_name="daily_entry_timing",
+            strategy_version="v1",
+            status="complete",
+            summary_json="{}",
+        )
+        self.plans = plans
+        self.reviews = []
+
+    def load_entry_plan_run(self, run_id):
+        assert run_id == "entry-run-test"
+        return self.run
+
+    def load_entry_plans(self, run_id, ready_only=False):
+        assert run_id == "entry-run-test"
+        if ready_only:
+            return [plan for plan in self.plans if plan.entry_status == "ready"]
+        return self.plans
+
+    def upsert_entry_plan_review(self, review):
+        self.reviews.append(review)
 
 
 class FakeConnectionFactory:

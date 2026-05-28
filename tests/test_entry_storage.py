@@ -69,6 +69,38 @@ def test_mysql_entry_storage_loads_ready_plans_by_run():
     assert factory.executed_params[-1] == ["entry-run-test", "ready"]
 
 
+def test_mysql_entry_storage_loads_entry_plan_run():
+    factory = FakeConnectionFactory(
+        rows=[
+            {
+                "run_id": "entry-run-test",
+                "recommendation_run_id": "rec-run-test",
+                "as_of": "2026-05-27",
+                "horizon": "5d",
+                "market_regime": "neutral",
+                "strategy_name": "daily_entry_timing",
+                "strategy_version": "v1",
+                "status": "complete",
+                "summary_json": "{}",
+            }
+        ]
+    )
+    storage = MySQLEntryStorage(
+        config=MySQLConfig.from_jdbc_url("jdbc:mysql://127.0.0.1:13306/openstockagent", "root", "123456"),
+        connection_factory=factory,
+        ensure_tables=False,
+    )
+
+    run = storage.load_entry_plan_run("entry-run-test")
+
+    assert run is not None
+    assert run.run_id == "entry-run-test"
+    assert run.recommendation_run_id == "rec-run-test"
+    assert run.horizon == "5d"
+    assert "FROM entry_plan_runs" in factory.executed_sql[-1]
+    assert factory.executed_params[-1] == ["entry-run-test"]
+
+
 def _plan():
     return EntryPlan(
         plan_id="entry-plan-test",

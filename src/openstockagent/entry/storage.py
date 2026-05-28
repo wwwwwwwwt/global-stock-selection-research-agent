@@ -128,6 +128,17 @@ class MySQLEntryStorage:
             record,
         )
 
+    def load_entry_plan_run(self, run_id: str) -> EntryPlanRun | None:
+        rows = _fetch_all(
+            self,
+            """SELECT run_id, recommendation_run_id, as_of, horizon, market_regime,
+                      strategy_name, strategy_version, status, summary_json
+               FROM entry_plan_runs
+               WHERE run_id = %s""",
+            [run_id],
+        )
+        return None if not rows else _run_from_row(rows[0])
+
     def delete_entry_plans(self, run_id: str) -> int:
         connection = self.connection_factory(self.config)
         try:
@@ -336,6 +347,34 @@ def _plan_from_row(row) -> EntryPlan:
         invalidation_json=values["invalidation_json"],
         risk_json=values["risk_json"],
         evidence_refs_json=values["evidence_refs_json"],
+    )
+
+
+def _run_from_row(row) -> EntryPlanRun:
+    values = _row_dict(
+        row,
+        [
+            "run_id",
+            "recommendation_run_id",
+            "as_of",
+            "horizon",
+            "market_regime",
+            "strategy_name",
+            "strategy_version",
+            "status",
+            "summary_json",
+        ],
+    )
+    return EntryPlanRun(
+        run_id=values["run_id"],
+        recommendation_run_id=values["recommendation_run_id"],
+        as_of=str(values["as_of"]),
+        horizon=values["horizon"],
+        market_regime=values["market_regime"],
+        strategy_name=values["strategy_name"],
+        strategy_version=values["strategy_version"],
+        status=values["status"],
+        summary_json=values["summary_json"],
     )
 
 

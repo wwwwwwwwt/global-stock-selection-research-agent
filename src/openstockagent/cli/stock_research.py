@@ -5,9 +5,10 @@ import click
 
 from openstockagent.data.storage import MySQLMarketDataStorage
 from openstockagent.database.mysql import MySQLConfig
+from openstockagent.entry.storage import MySQLEntryStorage
 from openstockagent.factors.storage import MySQLFactorStorage
 from openstockagent.market.storage import MySQLMarketRealityStorage
-from openstockagent.research.evaluation import evaluate_screen_run
+from openstockagent.research.evaluation import evaluate_entry_plan_run, evaluate_screen_run
 from openstockagent.research.rolling import run_rolling_screen_evaluation
 from openstockagent.research.storage import MySQLResearchStorage
 from openstockagent.screening.storage import MySQLScreeningStorage
@@ -95,6 +96,68 @@ def evaluate_screen(
             f"max_drawdown={_fmt(item.max_drawdown)} "
             f"entry={item.entry_date}:{item.entry_price:.4f} "
             f"exit={item.exit_date}:{item.exit_price:.4f}"
+        )
+    if result.errors:
+        click.echo("Skipped:")
+        for error in result.errors[:20]:
+            click.echo(f"- {error}")
+
+
+@main.command("evaluate-entry")
+@click.option("--entry-run-id", required=True, help="Entry plan run id to evaluate")
+@click.option("--review-date", default=None, help="Optional common review date; defaults to each plan time limit")
+@click.option("--interval", default="1d", show_default=True, help="Stored bar interval")
+@click.option("--source", default=None, help="Optional bar source filter")
+@click.option("--adjustment", default="split_adjusted", show_default=True, help="Bar adjustment filter")
+@click.option("--mysql-url", default="jdbc:mysql://127.0.0.1:13306/openstockagent", help="MySQL JDBC URL")
+@click.option("--mysql-user", default="root", help="MySQL username")
+@click.option("--mysql-password", default="123456", help="MySQL password")
+def evaluate_entry(
+    entry_run_id: str,
+    review_date: str | None,
+    interval: str,
+    source: str | None,
+    adjustment: str,
+    mysql_url: str,
+    mysql_user: str,
+    mysql_password: str,
+):
+    config = MySQLConfig.from_jdbc_url(mysql_url, username=mysql_user, password=mysql_password)
+    result = evaluate_entry_plan_run(
+        entry_run_id=entry_run_id,
+        review_date=review_date,
+        interval=interval,
+        source=source,
+        adjustment=adjustment,
+        entry_storage=MySQLEntryStorage(config=config),
+        bar_storage=MySQLMarketDataStorage(config=config),
+        research_storage=MySQLResearchStorage(config=config),
+    )
+    summary = json.loads(result.run.summary_json)
+    click.echo(
+        "Entry evaluation complete: "
+        f"run_id={result.run.run_id} "
+        f"entry_run_id={entry_run_id} "
+        f"as_of={result.run.as_of} "
+        f"horizon_days={result.run.horizon_days} "
+        f"plans_seen={summary['plans_seen']} "
+        f"reviewed_count={summary['reviewed_count']} "
+        f"skipped_count={summary['skipped_count']} "
+        f"triggered_rate={_fmt(summary['triggered_rate'])} "
+        f"mean_realized_return={_fmt(summary['mean_realized_return'])} "
+        f"mean_entry_quality_score={_fmt(summary['mean_entry_quality_score'])} "
+        f"mean_missed_opportunity={_fmt(summary['mean_missed_opportunity'])} "
+        f"mean_avoided_chase_loss={_fmt(summary['mean_avoided_chase_loss'])}"
+    )
+    for review in result.reviews:
+        click.echo(
+            f"{review.plan_id} "
+            f"triggered={review.triggered} "
+            f"realized_return={_fmt(review.realized_return)} "
+            f"max_drawdown={_fmt(review.max_drawdown)} "
+            f"quality={_fmt(review.entry_quality_score)} "
+            f"missed={_fmt(review.missed_opportunity)} "
+            f"avoided_chase={_fmt(review.avoided_chase_loss)}"
         )
     if result.errors:
         click.echo("Skipped:")

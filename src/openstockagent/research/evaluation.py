@@ -7,6 +7,8 @@ import json
 
 import pandas as pd
 
+from openstockagent.entry.models import EntryPlan, EntryPlanReview
+from openstockagent.entry.rules import build_entry_plan_review
 from openstockagent.research.models import BacktestResult, BacktestRun
 from openstockagent.screening.models import ScreenResult
 
@@ -15,6 +17,13 @@ from openstockagent.screening.models import ScreenResult
 class ScreenBacktestEvaluation:
     run: BacktestRun
     results: list[BacktestResult] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class EntryPlanBacktestEvaluation:
+    run: BacktestRun
+    reviews: list[EntryPlanReview] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
@@ -99,6 +108,64 @@ def evaluate_screen_run(
         evaluation_storage.delete_backtest_results(run_id)
         evaluation_storage.upsert_backtest_results(results)
     return ScreenBacktestEvaluation(run=run, results=results, errors=errors)
+
+
+def evaluate_entry_plan_run(
+    *,
+    entry_run_id: str,
+    entry_storage,
+    bar_storage,
+    research_storage=None,
+    review_date: str | None = None,
+    interval: str = "1d",
+    source: str | None = None,
+    adjustment: str | None = "split_adjusted",
+    run_id: str | None = None,
+) -> EntryPlanBacktestEvaluation:
+    entry_run = entry_storage.load_entry_plan_run(entry_run_id)
+    if entry_run is None:
+        raise ValueError(f"entry plan run not found: {entry_run_id}")
+    plans = entry_storage.load_entry_plans(entry_run_id, ready_only=False)
+    horizon_days = _horizon_to_days(entry_run.horizon)
+    run_id = run_id or _stable_entry_backtest_run_id(entry_run_id, review_date or "", horizon_days)
+
+    reviews = []
+    errors = []
+    for plan in plans:
+        plan_review_date = review_date or plan.time_limit_date
+        try:
+            start, end = _entry_review_bar_range(entry_run.as_of, plan_review_date, horizon_days)
+            bars = bar_storage.load_bars(
+                plan.instrument_id,
+                interval,
+                start,
+                end,
+                source=source,
+                adjustment=adjustment,
+            )
+            review = build_entry_plan_review(plan=plan, bars=bars, review_date=plan_review_date)
+        except Exception as exc:
+            errors.append(f"{plan.instrument_id}: {exc}")
+            continue
+        entry_storage.upsert_entry_plan_review(review)
+        reviews.append(review)
+
+    summary = _entry_evaluation_summary(plans=plans, reviews=reviews, errors=errors)
+    run = BacktestRun(
+        run_id=run_id,
+        source_type="entry",
+        source_run_id=entry_run_id,
+        universe_id=None,
+        as_of=entry_run.as_of,
+        horizon_days=horizon_days,
+        top_n=len(plans),
+        benchmark_instrument_id=None,
+        status="completed" if reviews else "no_data",
+        summary_json=json.dumps(summary, sort_keys=True),
+    )
+    if research_storage is not None:
+        research_storage.upsert_backtest_run(run)
+    return EntryPlanBacktestEvaluation(run=run, reviews=reviews, errors=errors)
 
 
 def build_forward_return_result(
@@ -227,6 +294,76 @@ def _summary(*, candidates_seen: int, results: list[BacktestResult], errors: lis
     }
 
 
+def _entry_evaluation_summary(
+    *,
+    plans: list[EntryPlan],
+    reviews: list[EntryPlanReview],
+    errors: list[str],
+) -> dict:
+    plan_by_id = {plan.plan_id: plan for plan in plans}
+    joined = [(plan_by_id[review.plan_id], review) for review in reviews if review.plan_id in plan_by_id]
+    return {
+        "plans_seen": len(plans),
+        "reviewed_count": len(reviews),
+        "skipped_count": len(errors),
+        "triggered_rate": _mean([1.0 if review.triggered else 0.0 for review in reviews]),
+        "mean_realized_return": _mean(
+            [review.realized_return for review in reviews if review.realized_return is not None]
+        ),
+        "mean_max_drawdown": _mean([review.max_drawdown for review in reviews if review.max_drawdown is not None]),
+        "mean_entry_quality_score": _mean(
+            [review.entry_quality_score for review in reviews if review.entry_quality_score is not None]
+        ),
+        "mean_missed_opportunity": _mean(
+            [review.missed_opportunity for review in reviews if review.missed_opportunity is not None]
+        ),
+        "mean_avoided_chase_loss": _mean(
+            [review.avoided_chase_loss for review in reviews if review.avoided_chase_loss is not None]
+        ),
+        "by_status": _entry_group_summary(joined, key=lambda plan: plan.entry_status),
+        "by_mode": _entry_group_summary(joined, key=lambda plan: plan.entry_mode),
+        "errors": errors[:20],
+    }
+
+
+def _entry_group_summary(joined: list[tuple[EntryPlan, EntryPlanReview]], key) -> dict:
+    groups = {}
+    for plan, review in joined:
+        groups.setdefault(key(plan), []).append(review)
+    return {
+        group_key: {
+            "count": len(group_reviews),
+            "triggered_rate": _mean([1.0 if review.triggered else 0.0 for review in group_reviews]),
+            "mean_realized_return": _mean(
+                [review.realized_return for review in group_reviews if review.realized_return is not None]
+            ),
+            "mean_entry_quality_score": _mean(
+                [review.entry_quality_score for review in group_reviews if review.entry_quality_score is not None]
+            ),
+            "mean_missed_opportunity": _mean(
+                [review.missed_opportunity for review in group_reviews if review.missed_opportunity is not None]
+            ),
+            "mean_avoided_chase_loss": _mean(
+                [review.avoided_chase_loss for review in group_reviews if review.avoided_chase_loss is not None]
+            ),
+        }
+        for group_key, group_reviews in sorted(groups.items())
+    }
+
+
+def _horizon_to_days(horizon: str) -> int:
+    if horizon.endswith("d") and horizon[:-1].isdigit():
+        return int(horizon[:-1])
+    mapping = {"daily": 1, "weekly": 5, "monthly": 20, "quarterly": 60}
+    return mapping.get(horizon, 5)
+
+
+def _entry_review_bar_range(as_of: str, review_date: str, horizon_days: int) -> tuple[str, str]:
+    start = pd.Timestamp(as_of).strftime("%Y-%m-%dT00:00:00Z")
+    end_date = max(pd.Timestamp(review_date), pd.Timestamp(as_of) + pd.DateOffset(days=max(7, horizon_days * 3)))
+    return start, end_date.strftime("%Y-%m-%dT23:59:59Z")
+
+
 def _mean(values: list[float]) -> float | None:
     if not values:
         return None
@@ -248,3 +385,8 @@ def _forward_bar_range(as_of: str, horizon_days: int) -> tuple[str, str]:
 def _stable_run_id(screen_run_id: str, as_of: str, horizon_days: int, top_n: int) -> str:
     payload = "|".join([screen_run_id, as_of, str(horizon_days), str(top_n)])
     return f"backtest-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _stable_entry_backtest_run_id(entry_run_id: str, review_date: str, horizon_days: int) -> str:
+    payload = "|".join([entry_run_id, review_date, str(horizon_days)])
+    return f"entry-backtest-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"

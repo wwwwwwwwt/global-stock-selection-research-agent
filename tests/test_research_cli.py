@@ -119,6 +119,90 @@ def test_research_init_db_cli_initializes_storage(monkeypatch):
     assert "Research storage initialized" in result.output
 
 
+def test_research_evaluate_entry_cli_runs_pipeline(monkeypatch):
+    from openstockagent.cli import stock_research
+    from openstockagent.entry.models import EntryPlanReview
+    from openstockagent.research.evaluation import EntryPlanBacktestEvaluation
+    from openstockagent.research.models import BacktestRun
+
+    calls = {}
+
+    def fake_evaluate_entry_plan_run(**kwargs):
+        calls.update(kwargs)
+        return EntryPlanBacktestEvaluation(
+            run=BacktestRun(
+                run_id="entry-backtest-test",
+                source_type="entry",
+                source_run_id=kwargs["entry_run_id"],
+                universe_id=None,
+                as_of="2026-05-27",
+                horizon_days=5,
+                top_n=2,
+                benchmark_instrument_id=None,
+                status="completed",
+                summary_json=json.dumps(
+                    {
+                        "plans_seen": 2,
+                        "reviewed_count": 2,
+                        "skipped_count": 0,
+                        "triggered_rate": 0.5,
+                        "mean_realized_return": 0.04,
+                        "mean_entry_quality_score": 0.65,
+                        "mean_missed_opportunity": 0.02,
+                        "mean_avoided_chase_loss": -0.03,
+                    }
+                ),
+            ),
+            reviews=[
+                EntryPlanReview(
+                    review_id="entry-review-test",
+                    plan_id="entry-plan-test",
+                    review_date="2026-06-03",
+                    triggered=True,
+                    trigger_date="2026-05-28",
+                    entry_price=10.5,
+                    review_price=11.0,
+                    realized_return=0.047619,
+                    max_drawdown=-0.02,
+                    max_favorable_return=0.08,
+                    avoided_chase_loss=None,
+                    missed_opportunity=None,
+                    entry_quality_score=0.7,
+                    review_notes_json="{}",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(stock_research, "evaluate_entry_plan_run", fake_evaluate_entry_plan_run)
+    monkeypatch.setattr(stock_research, "MySQLEntryStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLMarketDataStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLResearchStorage", lambda config: object())
+
+    result = CliRunner().invoke(
+        stock_research.main,
+        [
+            "evaluate-entry",
+            "--entry-run-id",
+            "entry-run-test",
+            "--review-date",
+            "2026-06-03",
+            "--interval",
+            "1d",
+            "--source",
+            "tushare",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["entry_run_id"] == "entry-run-test"
+    assert calls["review_date"] == "2026-06-03"
+    assert calls["source"] == "tushare"
+    assert calls["adjustment"] == "split_adjusted"
+    assert "Entry evaluation complete" in result.output
+    assert "triggered_rate=0.500000" in result.output
+    assert "entry-plan-test triggered=True" in result.output
+
+
 def test_research_rolling_screen_cli_runs_pipeline(monkeypatch):
     from openstockagent.cli import stock_research
     from openstockagent.research.models import ResearchExperimentDay, ResearchExperimentRun
