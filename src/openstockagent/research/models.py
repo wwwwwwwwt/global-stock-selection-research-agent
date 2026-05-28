@@ -44,3 +44,40 @@ class BacktestResult:
         record["rank_position"] = record.pop("rank")
         record["hit"] = int(self.hit)
         return record
+
+
+@dataclass(frozen=True)
+class ResearchExperimentRun:
+    experiment_id: str
+    universe_id: str
+    start_date: str
+    end_date: str
+    rebalance_frequency: str
+    horizon_days: int
+    top_n: int
+    strategy_name: str
+    strategy_version: str
+    benchmark_instrument_id: str | None
+    status: str
+    summary_json: str
+
+    def to_record(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ResearchExperimentDay:
+    experiment_id: str
+    as_of: str
+    screen_run_id: str
+    backtest_run_id: str
+    market_context_snapshot_id: str | None
+    candidate_count: int
+    evaluated_count: int
+    mean_return: float | None
+    mean_excess_return: float | None
+    hit_rate: float | None
+    summary_json: str
+
+    def to_record(self) -> dict:
+        return asdict(self)

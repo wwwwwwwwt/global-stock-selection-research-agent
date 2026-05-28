@@ -4,7 +4,7 @@ import pandas as pd
 
 from openstockagent.database.mysql import MySQLConfig
 from openstockagent.research.evaluation import evaluate_screen_run
-from openstockagent.research.models import BacktestResult, BacktestRun
+from openstockagent.research.models import BacktestResult, BacktestRun, ResearchExperimentDay, ResearchExperimentRun
 from openstockagent.research.storage import MySQLResearchStorage
 from openstockagent.screening.models import ScreenResult
 
@@ -139,13 +139,49 @@ def test_mysql_research_storage_creates_upserts_deletes_and_loads_results():
             )
         ]
     )
+    experiment = ResearchExperimentRun(
+        experiment_id="research-exp-test",
+        universe_id="cn_core",
+        start_date="2026-05-20",
+        end_date="2026-05-29",
+        rebalance_frequency="weekly",
+        horizon_days=2,
+        top_n=1,
+        strategy_name="default",
+        strategy_version="v1",
+        benchmark_instrument_id="EQUITY:CN:000300",
+        status="completed",
+        summary_json="{}",
+    )
+    storage.upsert_research_experiment_run(experiment)
+    storage.delete_research_experiment_days(experiment.experiment_id)
+    storage.upsert_research_experiment_days(
+        [
+            ResearchExperimentDay(
+                experiment_id=experiment.experiment_id,
+                as_of="2026-05-22",
+                screen_run_id="screen-test",
+                backtest_run_id=run.run_id,
+                market_context_snapshot_id=None,
+                candidate_count=10,
+                evaluated_count=1,
+                mean_return=0.05,
+                mean_excess_return=0.04,
+                hit_rate=1.0,
+                summary_json="{}",
+            )
+        ]
+    )
     loaded = storage.load_backtest_results(run.run_id)
 
     executed_sql = "\n".join(factory.executed_sql)
     assert "CREATE TABLE IF NOT EXISTS backtest_runs" in executed_sql
     assert "CREATE TABLE IF NOT EXISTS backtest_results" in executed_sql
+    assert "CREATE TABLE IF NOT EXISTS research_experiment_runs" in executed_sql
+    assert "CREATE TABLE IF NOT EXISTS research_experiment_days" in executed_sql
     assert "rank_position INTEGER NOT NULL" in executed_sql
     assert "DELETE FROM backtest_results WHERE run_id = %s" in executed_sql
+    assert "DELETE FROM research_experiment_days WHERE experiment_id = %s" in executed_sql
     assert "ON DUPLICATE KEY UPDATE" in executed_sql
     assert loaded[0].instrument_id == "EQUITY:CN:000001"
     assert loaded[0].excess_return == 0.04

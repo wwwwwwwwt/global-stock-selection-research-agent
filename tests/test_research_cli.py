@@ -117,3 +117,104 @@ def test_research_init_db_cli_initializes_storage(monkeypatch):
     assert result.exit_code == 0
     assert created["config"].database == "openstockagent"
     assert "Research storage initialized" in result.output
+
+
+def test_research_rolling_screen_cli_runs_pipeline(monkeypatch):
+    from openstockagent.cli import stock_research
+    from openstockagent.research.models import ResearchExperimentDay, ResearchExperimentRun
+    from openstockagent.research.rolling import RollingScreenEvaluationResult
+
+    calls = {}
+
+    def fake_run_rolling_screen_evaluation(**kwargs):
+        calls.update(kwargs)
+        return RollingScreenEvaluationResult(
+            experiment=ResearchExperimentRun(
+                experiment_id="research-exp-test",
+                universe_id=kwargs["universe_id"],
+                start_date=kwargs["start_date"],
+                end_date=kwargs["end_date"],
+                rebalance_frequency=kwargs["rebalance_frequency"],
+                horizon_days=kwargs["horizon_days"],
+                top_n=kwargs["top_n"],
+                strategy_name="default",
+                strategy_version="v1",
+                benchmark_instrument_id=kwargs["benchmark_instrument_id"],
+                status="completed",
+                summary_json=json.dumps(
+                    {
+                        "dates_seen": 2,
+                        "screen_runs_created": 2,
+                        "backtest_runs_created": 2,
+                        "evaluated_count": 4,
+                        "skipped_count": 0,
+                        "hit_rate": 0.75,
+                        "mean_return": 0.04,
+                        "mean_excess_return": 0.02,
+                        "mean_max_drawdown": -0.03,
+                    }
+                ),
+            ),
+            days=[
+                ResearchExperimentDay(
+                    experiment_id="research-exp-test",
+                    as_of="2026-05-22",
+                    screen_run_id="screen-test",
+                    backtest_run_id="backtest-test",
+                    market_context_snapshot_id=None,
+                    candidate_count=3,
+                    evaluated_count=2,
+                    mean_return=0.04,
+                    mean_excess_return=0.02,
+                    hit_rate=0.5,
+                    summary_json="{}",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(stock_research, "run_rolling_screen_evaluation", fake_run_rolling_screen_evaluation)
+    monkeypatch.setattr(stock_research, "MySQLUniverseStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLMarketDataStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLFactorStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLScreeningStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLResearchStorage", lambda config: object())
+    monkeypatch.setattr(stock_research, "MySQLMarketRealityStorage", lambda config: object())
+
+    result = CliRunner().invoke(
+        stock_research.main,
+        [
+            "rolling-screen",
+            "--universe",
+            "cn_core",
+            "--start-date",
+            "2026-05-18",
+            "--end-date",
+            "2026-05-29",
+            "--horizon-days",
+            "2",
+            "--rebalance",
+            "weekly",
+            "--top-n",
+            "3",
+            "--lookback-days",
+            "180",
+            "--benchmark-instrument-id",
+            "EQUITY:CN:000300",
+            "--max-dates",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["universe_id"] == "cn_core"
+    assert calls["start_date"] == "2026-05-18"
+    assert calls["end_date"] == "2026-05-29"
+    assert calls["horizon_days"] == 2
+    assert calls["rebalance_frequency"] == "weekly"
+    assert calls["top_n"] == 3
+    assert calls["lookback_days"] == 180
+    assert calls["benchmark_instrument_id"] == "EQUITY:CN:000300"
+    assert calls["max_dates"] == 2
+    assert "Rolling screen evaluation complete" in result.output
+    assert "experiment_id=research-exp-test" in result.output
+    assert "hit_rate=0.750000" in result.output

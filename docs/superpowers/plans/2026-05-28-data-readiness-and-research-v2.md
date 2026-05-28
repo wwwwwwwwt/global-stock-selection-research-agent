@@ -18,7 +18,10 @@
 - Modify `src/openstockagent/factors/storage.py`: add latest factor date helper.
 - Modify `src/openstockagent/market/storage.py`: add calendar-day lookup helper.
 - Modify `src/openstockagent/pipelines/cn_daily_selection.py`: run readiness check before recommendations and portfolio decisions; mark high-risk stale data as `data_bad`.
-- Modify `src/openstockagent/cli/stock_research.py`: add `init-db`.
+- Modify `src/openstockagent/cli/stock_research.py`: add `init-db` and rolling historical screen evaluation.
+- Create `src/openstockagent/research/rolling.py`: run factor calculation, screening, and screen evaluation over a historical rebalance schedule.
+- Modify `src/openstockagent/research/models.py`: add research experiment run/day models.
+- Modify `src/openstockagent/research/storage.py`: persist research experiment summaries and per-date links.
 - Test `tests/test_tushare_daily_batch.py`: empty provider frames do not crash.
 - Test `tests/test_cn_daily_selection_pipeline.py`: stale data readiness gates recommendation/portfolio behavior.
 - Test `tests/test_research_cli.py`: `stock-research init-db` initializes research tables.
@@ -75,4 +78,24 @@
 
 - [x] Run `/opt/homebrew/bin/uv run pytest tests/test_tushare_daily_batch.py tests/test_cn_daily_selection_pipeline.py tests/test_research_cli.py`.
 - [x] Run `/opt/homebrew/bin/uv run pytest`.
-- [ ] Commit with `feat: add data readiness gate`.
+- [x] Commit with `feat: add data readiness gate`.
+
+## Task 6: Rolling Screen Research Evaluation
+
+**Files:**
+- Create: `src/openstockagent/research/rolling.py`
+- Modify: `src/openstockagent/research/models.py`
+- Modify: `src/openstockagent/research/storage.py`
+- Modify: `src/openstockagent/cli/stock_research.py`
+- Test: `tests/test_research_rolling.py`
+- Test: `tests/test_research_evaluation.py`
+- Test: `tests/test_research_cli.py`
+
+- [x] Add experiment-level models for rolling research runs and per-rebalance-day summaries.
+- [x] Add MySQL DDL and upsert/delete helpers for `research_experiment_runs` and `research_experiment_days`.
+- [x] Add `run_rolling_screen_evaluation` to compute factors, run screening, evaluate forward returns, and persist a historical experiment.
+- [x] Add `stock-research rolling-screen` CLI.
+- [x] Add focused tests for rebalance dates, rolling persistence, storage DDL/upserts, and CLI wiring.
+- [x] Run `/opt/homebrew/bin/uv run pytest tests/test_research_rolling.py tests/test_research_evaluation.py tests/test_research_cli.py`.
+- [x] Run `/opt/homebrew/bin/uv run pytest`.
+- [x] Commit with `feat: add rolling screen evaluation`.
